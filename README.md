@@ -178,11 +178,14 @@ If you're one of those developers, feel free to open an issue to get your projec
 | `--noautomute` | Don't mute when other apps play audio |
 | `--no-audio-processing` | Disable audio reactive features |
 | `--fps <val>` | Limit frame rate |
+| `--anti-aliasing <samples>` | Multisample anti-aliasing: `0`, `2`, `4`, or `8` |
 | `--window <XxYxWxH>` | Run in windowed mode with custom size/position |
 | `--screen-root <screen>` | Set as background for specific screen |
 | `--screen-span <screen-1>,<screen-2>,...` | Stretch a single wallpaper across multiple screens |
 | `--bg <id/path>` | Assign a background to a specific screen (use after `--screen-root`/`--screen-span`) |
 | `--scaling <mode>` | Wallpaper scaling: `stretch`, `fit`, `fill`, or `default` |
+| `--align-x <mode>` | Horizontal crop alignment: `left`, `center`, or `right` |
+| `--align-y <mode>` | Vertical crop alignment: `top`, `center`, or `bottom` |
 | `--clamping <mode>` | Set texture clamping: `clamp`, `border`, `repeat` |
 | `--assets-dir <path>` | Set custom path for assets |
 | `--screenshot <file>` | Save screenshot (PNG, JPEG, BMP) |

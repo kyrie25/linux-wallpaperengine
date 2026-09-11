@@ -341,25 +341,25 @@ std::shared_ptr<const CFBO> CWallpaper::getFBO () const { return this->m_sceneFB
 std::unique_ptr<CWallpaper> CWallpaper::fromWallpaper (
     const Wallpaper& wallpaper, RenderContext& context, AudioContext& audioContext,
     WebBrowser::WebBrowserContext* browserContext, const WallpaperState::TextureUVsScaling& scalingMode,
-    const uint32_t& clampMode
+    const uint32_t& clampMode, const glm::vec2& alignment
 ) {
+    std::unique_ptr<CWallpaper> result;
     if (wallpaper.is<Scene> ()) {
-	return std::make_unique<WallpaperEngine::Render::Wallpapers::CScene> (
+	result = std::make_unique<WallpaperEngine::Render::Wallpapers::CScene> (
 	    wallpaper, context, audioContext, scalingMode, clampMode
 	);
-    }
-
-    if (wallpaper.is<Video> ()) {
-	return std::make_unique<WallpaperEngine::Render::Wallpapers::CVideo> (
+    } else if (wallpaper.is<Video> ()) {
+	result = std::make_unique<WallpaperEngine::Render::Wallpapers::CVideo> (
 	    wallpaper, context, audioContext, scalingMode, clampMode
 	);
-    }
-
-    if (wallpaper.is<Web> ()) {
-	return std::make_unique<WallpaperEngine::Render::Wallpapers::CWeb> (
+    } else if (wallpaper.is<Web> ()) {
+	result = std::make_unique<WallpaperEngine::Render::Wallpapers::CWeb> (
 	    wallpaper, context, audioContext, *browserContext, scalingMode, clampMode
 	);
+    } else {
+	sLog.exception ("Unsupported wallpaper type");
     }
 
-    sLog.exception ("Unsupported wallpaper type");
+    result->m_state.setAlignment (alignment);
+    return result;
 }

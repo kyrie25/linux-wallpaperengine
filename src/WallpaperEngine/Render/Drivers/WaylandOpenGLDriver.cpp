@@ -184,8 +184,19 @@ void WaylandOpenGLDriver::initEGL () {
 
     EGLint matchedConfigs = 0;
     const EGLint CONFIG_ATTRIBUTES[] = {
-	EGL_SURFACE_TYPE,    EGL_WINDOW_BIT, EGL_RED_SIZE, 1, EGL_GREEN_SIZE, 1, EGL_BLUE_SIZE, 1, EGL_SAMPLES, 4,
-	EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT, EGL_NONE,
+	EGL_SURFACE_TYPE,
+	EGL_WINDOW_BIT,
+	EGL_RED_SIZE,
+	1,
+	EGL_GREEN_SIZE,
+	1,
+	EGL_BLUE_SIZE,
+	1,
+	EGL_SAMPLES,
+	this->m_context.settings.render.antiAliasing,
+	EGL_RENDERABLE_TYPE,
+	EGL_OPENGL_BIT,
+	EGL_NONE,
     };
 
     if (!eglChooseConfig (m_eglContext.display, CONFIG_ATTRIBUTES, &m_eglContext.config, 1, &matchedConfigs)) {

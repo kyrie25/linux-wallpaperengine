@@ -35,14 +35,9 @@ void WallpaperState::updateUs (const int& projectionWidth, const int& projection
     const float viewportWidth = this->getViewportWidth ();
     const float viewportHeight = this->getViewportHeight ();
     const int newWidth = viewportHeight / projectionHeight * projectionWidth;
-    const float newCenter = newWidth / 2.0f;
-    const float viewportCenter = viewportWidth / 2.0;
-
-    const float left = newCenter - viewportCenter;
-    const float right = newCenter + viewportCenter;
-
-    this->m_UVs.ustart = left / newWidth;
-    this->m_UVs.uend = right / newWidth;
+    const float visibleWidth = viewportWidth / newWidth;
+    this->m_UVs.ustart = (1.0f - visibleWidth) * std::clamp (this->m_alignment.x, 0.0f, 1.0f);
+    this->m_UVs.uend = this->m_UVs.ustart + visibleWidth;
 }
 
 // Update Vs coordinates for current viewport and projection
@@ -50,18 +45,16 @@ void WallpaperState::updateVs (const int& projectionWidth, const int& projection
     const float viewportWidth = this->getViewportWidth ();
     const float viewportHeight = this->getViewportHeight ();
     const int newHeight = viewportWidth / projectionWidth * projectionHeight;
-    const float newCenter = newHeight / 2.0f;
-    const float viewportCenter = viewportHeight / 2.0;
-
-    const float down = newCenter - viewportCenter;
-    const float up = newCenter + viewportCenter;
+    const float visibleHeight = viewportHeight / newHeight;
+    const float start = (1.0f - visibleHeight) * std::clamp (this->m_alignment.y, 0.0f, 1.0f);
+    const float end = start + visibleHeight;
 
     if (m_vflip) {
-	this->m_UVs.vstart = down / newHeight;
-	this->m_UVs.vend = up / newHeight;
+	this->m_UVs.vstart = start;
+	this->m_UVs.vend = end;
     } else {
-	this->m_UVs.vstart = up / newHeight;
-	this->m_UVs.vend = down / newHeight;
+	this->m_UVs.vstart = end;
+	this->m_UVs.vend = start;
     }
 }
 
@@ -144,6 +137,8 @@ uint32_t WallpaperState::getClampingMode () const { return this->m_clampingMode;
 void WallpaperState::setTextureUVsStrategy (WallpaperState::TextureUVsScaling strategy) {
     this->m_textureUVsMode = strategy;
 }
+
+void WallpaperState::setAlignment (const glm::vec2& alignment) { this->m_alignment = alignment; }
 
 int WallpaperState::getViewportWidth () const { return this->m_viewport.width; }
 

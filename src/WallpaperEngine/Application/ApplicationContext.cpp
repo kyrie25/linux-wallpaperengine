@@ -313,6 +313,7 @@ void ApplicationContext::loadSettingsFromArgv () {
 	    this->settings.general.screenBackgrounds[lastScreen] = "";
 	    this->settings.general.screenScalings[lastScreen] = this->settings.render.window.scalingMode;
 	    this->settings.general.screenClamps[lastScreen] = this->settings.render.window.clamp;
+	    this->settings.general.screenAlignments[lastScreen] = this->settings.render.window.alignment;
 	})
 	.append ();
     backgroundGroup.add_argument ("--screen-span")
@@ -356,6 +357,7 @@ void ApplicationContext::loadSettingsFromArgv () {
 
 	    group.scaling = this->settings.render.window.scalingMode;
 	    group.clamp = this->settings.render.window.clamp;
+	    group.alignment = this->settings.render.window.alignment;
 	    this->settings.general.spanGroups.push_back (std::move (group));
 	    // set lastScreen to a synthetic name so --bg/--scaling/--clamp can target this group
 	    lastScreen = "span:" + value;
@@ -432,6 +434,36 @@ void ApplicationContext::loadSettingsFromArgv () {
 	    }
 	})
 	.append ();
+    backgroundGroup.add_argument ("--align-x")
+	.help ("Horizontal crop alignment for the previous output: left, center, or right")
+	.choices ("left", "center", "right")
+	.action ([this, &lastScreen] (const std::string& value) -> void {
+	    const float alignment = value == "left" ? 0.0f : value == "right" ? 1.0f : 0.5f;
+	    if (this->settings.render.mode == DESKTOP_BACKGROUND) {
+		this->settings.general.screenAlignments[lastScreen].x = alignment;
+		if (lastScreen.rfind ("span:", 0) == 0 && !this->settings.general.spanGroups.empty ()) {
+		    this->settings.general.spanGroups.back ().alignment.x = alignment;
+		}
+	    } else {
+		this->settings.render.window.alignment.x = alignment;
+	    }
+	})
+	.append ();
+    backgroundGroup.add_argument ("--align-y")
+	.help ("Vertical crop alignment for the previous output: top, center, or bottom")
+	.choices ("top", "center", "bottom")
+	.action ([this, &lastScreen] (const std::string& value) -> void {
+	    const float alignment = value == "top" ? 0.0f : value == "bottom" ? 1.0f : 0.5f;
+	    if (this->settings.render.mode == DESKTOP_BACKGROUND) {
+		this->settings.general.screenAlignments[lastScreen].y = alignment;
+		if (lastScreen.rfind ("span:", 0) == 0 && !this->settings.general.spanGroups.empty ()) {
+		    this->settings.general.spanGroups.back ().alignment.y = alignment;
+		}
+	    } else {
+		this->settings.render.window.alignment.y = alignment;
+	    }
+	})
+	.append ();
     backgroundGroup.add_argument ("--clamp")
 	.help (
 	    "Clamp mode to use when rendering the background, this applies to the previous --window, --screen-root, "
@@ -487,6 +519,12 @@ void ApplicationContext::loadSettingsFromArgv () {
 	});
 
     auto& performanceGroup = program.add_group ("Performance options");
+
+    performanceGroup.add_argument ("--anti-aliasing")
+	.help ("Multisample anti-aliasing sample count")
+	.choices ("0", "2", "4", "8")
+	.default_value (std::string ("4"))
+	.action ([this] (const std::string& value) -> void { this->settings.render.antiAliasing = std::stoi (value); });
 
     performanceGroup.add_argument ("-f", "--fps")
 	.help ("Limits the FPS to the given number, useful to keep battery consumption low")

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 
 #include "ApplicationState.h"
@@ -72,6 +73,7 @@ public:
 	WallpaperEngine::Render::WallpaperState::TextureUVsScaling scaling
 	    = WallpaperEngine::Render::WallpaperState::TextureUVsScaling::DefaultUVs;
 	TextureFlags clamp = TextureFlags_ClampUVs;
+	glm::vec2 alignment = { 0.5f, 0.5f };
     };
 
     struct {
@@ -97,6 +99,8 @@ public:
 	    std::map<std::string, WallpaperEngine::Render::WallpaperState::TextureUVsScaling> screenScalings;
 	    /** The clamping mode for different screens */
 	    std::map<std::string, TextureFlags> screenClamps;
+	    /** Horizontal and vertical crop alignment for different screens */
+	    std::map<std::string, glm::vec2> screenAlignments;
 	    /** Playlists selected per screen */
 	    std::map<std::string, PlaylistDefinition> screenPlaylists;
 	    /** Playlist used in window mode */
@@ -113,6 +117,8 @@ public:
 	    WINDOW_MODE mode;
 	    /** Maximum FPS */
 	    int maximumFPS;
+	    /** Requested multisample anti-aliasing sample count */
+	    int antiAliasing;
 	    /** Indicates if pausing should happen when something goes fullscreen */
 	    bool pauseOnFullscreen;
 	    /**
@@ -140,6 +146,7 @@ public:
 		glm::ivec4 geometry;
 		TextureFlags clamp;
 		WallpaperEngine::Render::WallpaperState::TextureUVsScaling scalingMode;
+		glm::vec2 alignment;
 	    } window;
 
 	    struct {
@@ -193,6 +200,7 @@ public:
             .properties = {},
             .screenScalings = {},
             .screenClamps = {},
+            .screenAlignments = {},
             .screenPlaylists = {},
             .defaultPlaylist = std::nullopt,
             .spanGroups = {},
@@ -200,6 +208,7 @@ public:
         .render = {
             .mode = NORMAL_WINDOW,
             .maximumFPS = 30,
+            .antiAliasing = 4,
             .pauseOnFullscreen = true,
             .pauseOnFullscreenOnlyWhenActive = false,
             .fullscreenPauseIgnoreAppIds = {},
@@ -215,6 +224,7 @@ public:
                 .geometry = {},
                 .clamp = TextureFlags_ClampUVs,
                 .scalingMode = WallpaperEngine::Render::WallpaperState::TextureUVsScaling::DefaultUVs,
+                .alignment = { 0.5f, 0.5f },
             },
             .wayland = {
                 .layer = WAYLAND_LAYER_BOTTOM,

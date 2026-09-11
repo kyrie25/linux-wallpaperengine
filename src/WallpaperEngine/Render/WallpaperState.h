@@ -2,6 +2,7 @@
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
 
 #include "TextureProvider.h"
@@ -88,6 +89,9 @@ public:
      */
     void setTextureUVsStrategy (TextureUVsScaling strategy);
 
+    /** Sets horizontal and vertical crop alignment in the 0..1 range. */
+    void setAlignment (const glm::vec2& alignment);
+
     /**
      * @return The width of viewport
      */
@@ -135,5 +139,6 @@ private:
     // Texture scaling mode
     TextureUVsScaling m_textureUVsMode = TextureUVsScaling::DefaultUVs;
     uint32_t m_clampingMode = TextureFlags_NoFlags;
+    glm::vec2 m_alignment = { 0.5f, 0.5f };
 };
 } // namespace WallpaperEngine::Render

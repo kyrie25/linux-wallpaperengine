@@ -27,7 +27,7 @@ GLFWOpenGLDriver::GLFWOpenGLDriver (const char* windowTitle, ApplicationContext&
     }
 
     // set some window hints (opengl version to be used)
-    glfwWindowHint (GLFW_SAMPLES, 4);
+    glfwWindowHint (GLFW_SAMPLES, context.settings.render.antiAliasing);
     glfwWindowHint (GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint (GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint (GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
