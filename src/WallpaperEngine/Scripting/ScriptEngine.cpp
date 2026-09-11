@@ -114,7 +114,11 @@ static void jsToDynamicValue (JSContext* ctx, JSValue val, DynamicValue& source)
     // scalar types returned directly
     int tag = JS_VALUE_GET_TAG (val);
 
-    if (tag == JS_TAG_UNDEFINED || tag == JS_TAG_UNINITIALIZED || tag == JS_TAG_NULL) {
+    if (tag == JS_TAG_UNDEFINED || tag == JS_TAG_UNINITIALIZED) {
+	return;
+    }
+
+    if (tag == JS_TAG_NULL) {
 	source.update (DynamicValue::UpdateSource::Script);
 	return;
     }
@@ -126,6 +130,7 @@ static void jsToDynamicValue (JSContext* ctx, JSValue val, DynamicValue& source)
 
     if (tag == JS_TAG_BOOL) {
 	source.update (static_cast<bool> (JS_VALUE_GET_BOOL (val)), DynamicValue::UpdateSource::Script);
+	return;
     }
 
     if (JS_TAG_IS_FLOAT64 (tag)) {
@@ -153,7 +158,7 @@ static void jsToDynamicValue (JSContext* ctx, JSValue val, DynamicValue& source)
 	    JS_FreeValue (ctx, w);
 	});
 
-	if (!JS_IsNumber (x) || JS_IsNumber (y)) {
+	if (!JS_IsNumber (x) || !JS_IsNumber (y)) {
 	    sLog.exception ("Vector's x and y components must be numbers");
 	}
 
@@ -168,10 +173,13 @@ static void jsToDynamicValue (JSContext* ctx, JSValue val, DynamicValue& source)
 	}
 
 	if (!JS_IsNumber (w)) {
+	    JS_ToFloat64 (ctx, &zVal, z);
 	    source.update (glm::vec3 (xVal, yVal, zVal), DynamicValue::UpdateSource::Script);
 	    return;
 	}
 
+	JS_ToFloat64 (ctx, &zVal, z);
+	JS_ToFloat64 (ctx, &wVal, w);
 	source.update (glm::vec4 (xVal, yVal, zVal, wVal), DynamicValue::UpdateSource::Script);
     }
 }
