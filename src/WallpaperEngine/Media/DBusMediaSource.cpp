@@ -3,7 +3,13 @@
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
 #include "WallpaperEngine/Logging/Log.h"
 
+#include <cmath>
+
 using namespace WallpaperEngine::Media;
+
+namespace {
+constexpr double kMicrosecondsPerSecond = 1000000.0;
+}
 
 DBusHandlerResult dbus_message_filter (DBusConnection* connection, DBusMessage* message, void* user_data) {
     const auto mediaSource = static_cast<DBusMediaSource*> (user_data);
@@ -159,9 +165,10 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant) {
 	} else if (keyStr == "mpris:length") {
 	    int64_t length = 0;
 	    dbus_message_iter_get_basic (&value, &length);
+	    const double duration = std::floor (static_cast<double> (length) / kMicrosecondsPerSecond);
 
-	    if (this->m_mediaInfo.duration != length) {
-		this->m_mediaInfo.duration = length;
+	    if (this->m_mediaInfo.duration != duration) {
+		this->m_mediaInfo.duration = duration;
 		metadataUpdate = true;
 	    }
 	}
@@ -211,8 +218,10 @@ void DBusMediaSource::parsePosition (DBusMessageIter& variant) {
     int64_t position = 0;
     dbus_message_iter_get_basic (&variant, &position);
 
-    if (this->m_mediaInfo.position != position) {
-	this->m_mediaInfo.position = position;
+    const double positionSeconds = std::floor (static_cast<double> (position) / kMicrosecondsPerSecond);
+
+    if (this->m_mediaInfo.position != positionSeconds) {
+	this->m_mediaInfo.position = positionSeconds;
 	this->fireMetadataListeners ();
     }
 }
@@ -363,8 +372,10 @@ void DBusMediaSource::performUpdate () {
     dbus_int64_t position = 0;
     dbus_message_iter_get_basic (&variant, &position);
 
-    if (this->m_mediaInfo.position != position) {
-	this->m_mediaInfo.position = position;
+    const double positionSeconds = std::floor (static_cast<double> (position) / kMicrosecondsPerSecond);
+
+    if (this->m_mediaInfo.position != positionSeconds) {
+	this->m_mediaInfo.position = positionSeconds;
 	this->fireMetadataListeners ();
     }
 }

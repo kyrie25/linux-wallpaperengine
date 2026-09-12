@@ -858,11 +858,11 @@ void CImage::evaluatePuppetSkin (
 
 	glm::mat4 local = bone.localBind;
 	if (hasAuthoredTrack) {
-	    // rotations are authored in WE's y-down space while the mesh lives in y-up
+	    // Keep animation transforms in model space; screen-space Y is flipped when positions are uploaded.
 	    local = glm::translate (glm::mat4 (1.0f), position);
-	    local = glm::rotate (local, -rotation.z, glm::vec3 (0.0f, 0.0f, 1.0f));
+	    local = glm::rotate (local, rotation.z, glm::vec3 (0.0f, 0.0f, 1.0f));
 	    local = glm::rotate (local, rotation.y, glm::vec3 (0.0f, 1.0f, 0.0f));
-	    local = glm::rotate (local, -rotation.x, glm::vec3 (1.0f, 0.0f, 0.0f));
+	    local = glm::rotate (local, rotation.x, glm::vec3 (1.0f, 0.0f, 0.0f));
 	    local = glm::scale (local, scale);
 	}
 

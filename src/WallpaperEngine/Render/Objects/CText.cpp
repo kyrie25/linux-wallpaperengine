@@ -1,6 +1,9 @@
 #include "CText.h"
 
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
+#include <string_view>
 #include <vector>
 
 #include <ft2build.h>
@@ -14,12 +17,15 @@
 #include "WallpaperEngine/Data/Model/UserSetting.h"
 #include "WallpaperEngine/Logging/Log.h"
 #include "WallpaperEngine/Render/Camera.h"
+#include "WallpaperEngine/Render/Objects/CImage.h"
 #include "WallpaperEngine/Render/Wallpapers/CScene.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 
 using namespace WallpaperEngine::Render::Objects;
 
 namespace {
+constexpr float kPointSizeScale = 4.0f;
+
 // TODO: Phase 2 – load font from wallpaper's materials/fonts/ using AssetLocator
 // Phase 1 uses a system font instead of the font shipped by the wallpaper.
 // Wallpaper Engine bundles .ttf files in `materials/fonts/`; wiring those in
@@ -30,6 +36,67 @@ const std::vector<std::string> kFontCandidates = {
     "/usr/share/fonts/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 };
+
+const std::vector<std::string> kFallbackFontCandidates = {
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/local/share/fonts/WindowsFonts/msgothic.ttc",
+};
+
+std::vector<uint32_t> decodeUtf8 (std::string_view input) {
+    std::vector<uint32_t> result;
+    result.reserve (input.size ());
+
+    for (size_t index = 0; index < input.size ();) {
+	const auto first = static_cast<uint8_t> (input[index]);
+	if (first < 0x80) {
+	    result.push_back (first);
+	    index++;
+	    continue;
+	}
+
+	size_t length = 0;
+	uint32_t codepoint = 0;
+	if ((first & 0xE0) == 0xC0) {
+	    length = 2;
+	    codepoint = first & 0x1F;
+	} else if ((first & 0xF0) == 0xE0) {
+	    length = 3;
+	    codepoint = first & 0x0F;
+	} else if ((first & 0xF8) == 0xF0) {
+	    length = 4;
+	    codepoint = first & 0x07;
+	}
+
+	if (length == 0 || index + length > input.size ()) {
+	    result.push_back (0xFFFD);
+	    index++;
+	    continue;
+	}
+
+	bool valid = true;
+	for (size_t offset = 1; offset < length; offset++) {
+	    const auto continuation = static_cast<uint8_t> (input[index + offset]);
+	    if ((continuation & 0xC0) != 0x80) {
+		valid = false;
+		break;
+	    }
+	    codepoint = (codepoint << 6) | (continuation & 0x3F);
+	}
+
+	const bool overlong = (length == 2 && codepoint < 0x80) || (length == 3 && codepoint < 0x800)
+	    || (length == 4 && codepoint < 0x10000);
+	if (!valid || overlong || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+	    result.push_back (0xFFFD);
+	    index++;
+	    continue;
+	}
+
+	result.push_back (codepoint);
+	index += length;
+    }
+
+    return result;
+}
 
 const char* kVertexShader = R"glsl(
 #version 330 core
@@ -105,6 +172,9 @@ CText::~CText () {
     if (m_ftFace != nullptr) {
 	FT_Done_Face (m_ftFace);
     }
+    if (m_fallbackFace != nullptr) {
+	FT_Done_Face (m_fallbackFace);
+    }
     if (m_ftLibrary != nullptr) {
 	FT_Done_FreeType (m_ftLibrary);
     }
@@ -126,9 +196,13 @@ void CText::setup () {
     if (!loadEmbeddedFont () && !loadSystemFont ()) {
 	return;
     }
+    loadFallbackFont ();
 
     m_lastPixelSize = computeEffectivePixelSize ();
     FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
+    if (m_fallbackFace != nullptr) {
+	FT_Set_Pixel_Sizes (m_fallbackFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
+    }
 
     buildShader ();
     // Scripted text may have an empty placeholder; use a single space so the
@@ -201,6 +275,71 @@ bool CText::loadSystemFont () {
     return true;
 }
 
+bool CText::loadFallbackFont () {
+    for (const auto& candidate : kFallbackFontCandidates) {
+	if (std::filesystem::exists (candidate) && FT_New_Face (m_ftLibrary, candidate.c_str (), 0, &m_fallbackFace) == 0) {
+	    return true;
+	}
+    }
+    return false;
+}
+
+FT_Face CText::glyphFace (uint32_t codepoint) const {
+    if (FT_Get_Char_Index (m_ftFace, codepoint) != 0 || m_fallbackFace == nullptr) {
+	return m_ftFace;
+    }
+    return m_fallbackFace;
+}
+
+float CText::maxTextureWidth () const {
+    if (!m_text.parent.has_value ()) {
+	return 0.0f;
+    }
+
+    const auto* parent = dynamic_cast<const CImage*> (this->getScene ().getObject (*m_text.parent));
+    if (parent == nullptr) {
+	return 0.0f;
+    }
+
+    const float authoredParentWidth = parent->getImage ().size.x;
+    const float parentLocalWidth = authoredParentWidth > 0.0f ? authoredParentWidth : parent->getSize ().x;
+    if (parentLocalWidth < m_text.size.x) {
+	return 0.0f;
+    }
+
+    const auto textTransform = this->resolveTransform (m_text);
+    const auto parentTransform = this->resolveTransform (parent->getImage ());
+    if (std::abs (textTransform.angle - parentTransform.angle) > 0.0001f || textTransform.scale.x == 0.0f) {
+	return 0.0f;
+    }
+
+    const float parentWidth = parentLocalWidth * std::abs (parentTransform.scale.x);
+    float parentLeft = parentTransform.origin.x - parentWidth * 0.5f;
+    float parentRight = parentTransform.origin.x + parentWidth * 0.5f;
+    if (parent->getImage ().alignment.find ("left") != std::string::npos) {
+	parentLeft = parentTransform.origin.x;
+	parentRight = parentLeft + parentWidth;
+    } else if (parent->getImage ().alignment.find ("right") != std::string::npos) {
+	parentRight = parentTransform.origin.x;
+	parentLeft = parentRight - parentWidth;
+    }
+
+    const float textScale = std::abs (textTransform.scale.x);
+    const float horizontalPadding = m_text.padding.x * textScale;
+    if (m_text.alignment == "left") {
+	const float textLeft = textTransform.origin.x + m_text.padding.x * textScale;
+	return std::max (0.0f, (parentRight - horizontalPadding - textLeft) / textScale);
+    }
+    if (m_text.alignment == "right") {
+	const float textRight = textTransform.origin.x - m_text.padding.x * textScale;
+	return std::max (0.0f, (textRight - parentLeft - horizontalPadding) / textScale);
+    }
+
+    const float leftSpace = textTransform.origin.x - parentLeft - horizontalPadding;
+    const float rightSpace = parentRight - textTransform.origin.x - horizontalPadding;
+    return std::max (0.0f, 2.0f * std::min (leftSpace, rightSpace) / textScale);
+}
+
 unsigned int CText::computeEffectivePixelSize () const {
     // WE text objects often come with scale ~0.09 that, combined with a modest
     // pointsize, would rasterize glyphs to ~2px on screen (invisible). Rasterize
@@ -209,7 +348,9 @@ unsigned int CText::computeEffectivePixelSize () const {
     const glm::vec3 initialScale = this->resolveTransform (m_text).scale;
     const float avgScale = (initialScale.x + initialScale.y) * 0.5f;
     const float compensate = (avgScale > 0.0f && avgScale < 1.0f) ? std::min (1.0f / avgScale, 32.0f) : 1.0f;
-    return std::max<unsigned int> (1u, static_cast<unsigned int> (m_text.pointSize->value->getFloat () * compensate));
+    return std::max<unsigned int> (
+	1u, static_cast<unsigned int> (m_text.pointSize->value->getFloat () * kPointSizeScale * compensate)
+    );
 }
 
 void CText::initScriptLayer () {
@@ -236,31 +377,36 @@ void CText::rebuildTextureFrom (const std::string& text) {
     // Safe to call repeatedly: GL handles (texture, VAO, VBO) are reused when
     // already allocated, so dynamic/scripted text can regenerate the glyph
     // bitmap every time the rendered string changes without leaking.
-    FT_GlyphSlot slot = m_ftFace->glyph;
+    const auto codepoints = decodeUtf8 (text);
 
     int penX = 0;
     int maxAscent = 0;
     int maxDescent = 0;
 
-    for (unsigned char c : text) {
-	if (FT_Load_Char (m_ftFace, static_cast<FT_ULong> (c), FT_LOAD_RENDER) != 0) {
+    for (uint32_t codepoint : codepoints) {
+	FT_Face face = glyphFace (codepoint);
+	if (FT_Load_Char (face, codepoint, FT_LOAD_RENDER) != 0) {
 	    continue;
 	}
+	FT_GlyphSlot slot = face->glyph;
 	penX += slot->advance.x >> 6;
 	maxAscent = std::max (maxAscent, slot->bitmap_top);
 	maxDescent = std::max (maxDescent, static_cast<int> (slot->bitmap.rows) - slot->bitmap_top);
     }
 
-    const int width = std::max (1, penX);
+    const float widthLimit = maxTextureWidth ();
+    const int width = std::max (1, widthLimit > 0.0f ? std::min (penX, static_cast<int> (widthLimit)) : penX);
     const int height = std::max (1, maxAscent + maxDescent);
     std::vector<uint8_t> pixels (static_cast<size_t> (width) * height, 0);
 
     penX = 0;
-    for (unsigned char c : text) {
-	if (FT_Load_Char (m_ftFace, static_cast<FT_ULong> (c), FT_LOAD_RENDER) != 0) {
+    for (uint32_t codepoint : codepoints) {
+	FT_Face face = glyphFace (codepoint);
+	if (FT_Load_Char (face, codepoint, FT_LOAD_RENDER) != 0) {
 	    continue;
 	}
 
+	FT_GlyphSlot slot = face->glyph;
 	const auto& bmp = slot->bitmap;
 	const int originX = penX + slot->bitmap_left;
 	const int originY = maxAscent - slot->bitmap_top;
@@ -337,20 +483,23 @@ void CText::buildShader () {
 }
 
 void CText::uploadQuadVertices () {
-    // Quad horizontally centered on the origin with its TOP edge at the origin —
-    // WE text boxes anchor at the top and grow downward (clock widgets stack lines
-    // by offsetting origins one text-height apart). Scene-space placement is done
-    // via the model matrix using the object's origin/scale. VBO contents are
-    // re-uploaded whenever the glyph bitmap is rebuilt so the quad always matches
-    // the current texture dimensions.
-    const float hx = m_quadSize.x * 0.5f;
-    const float sy = m_quadSize.y;
+    // Wallpaper Engine includes the text padding in the authored origin. Our
+    // tightly packed glyph texture omits that border, so restore its offset.
+    float left = m_quadSize.x * -0.5f;
+    if (m_text.alignment == "left") {
+	left = m_text.padding.x;
+    } else if (m_text.alignment == "right") {
+	left = -m_text.padding.x - m_quadSize.x;
+    }
+    const float right = left + m_quadSize.x;
+    const float top = m_text.verticalalign == "center" ? -m_text.padding.y : 0.0f;
+    const float bottom = top + m_quadSize.y;
     // With vflip=true (Wayland/GLFW), GL y- = screen top. So the quad bottom (y=0,
     // lower GL y) appears at screen top. UV.v=0 here = FT glyph top → shows at screen top ✓
     const float verts[] = {
 	// pos        // uv
-	-hx, 0.0f, 0.0f, 0.0f, hx, 0.0f, 1.0f, 0.0f, hx,  sy, 1.0f, 1.0f,
-	-hx, 0.0f, 0.0f, 0.0f, hx, sy,  1.0f, 1.0f, -hx, sy, 0.0f, 1.0f,
+	left, top, 0.0f, 0.0f, right, top, 1.0f, 0.0f, right, bottom, 1.0f, 1.0f,
+	left, top, 0.0f, 0.0f, right, bottom, 1.0f, 1.0f, left, bottom, 0.0f, 1.0f,
     };
 
     const bool firstUpload = (m_vao == 0);
@@ -399,6 +548,9 @@ void CText::render () {
     if (pixelSize != m_lastPixelSize) {
 	m_lastPixelSize = pixelSize;
 	FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
+	if (m_fallbackFace != nullptr) {
+	    FT_Set_Pixel_Sizes (m_fallbackFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
+	}
 	rebuildTextureFrom (renderedText);
     } else if (renderedText != m_lastRenderedText) {
 	rebuildTextureFrom (renderedText);

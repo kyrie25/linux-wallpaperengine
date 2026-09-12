@@ -25,17 +25,10 @@ namespace WallpaperEngine::Render::Objects {
 using namespace WallpaperEngine::Data::Model;
 
 /**
- * Phase 1 text renderer.
+ * Text renderer.
  *
- * Renders static text objects as a single FreeType-rasterized RGBA texture
- * drawn on a textured quad with its own minimal GLSL shader. Does NOT go
- * through CRenderable / materials / passes — Phase 1 does not need effects.
- *
- * Phase 2 (scripted/dynamic text, alignment from properties, effect passes)
- * is intentionally not implemented here. When the scene provides a dynamic
- * `text: { script: "..." }` object this class captures the script source in
- * the data model but renders an empty string — the Wallpaper Engine JS
- * runtime required to evaluate it is out of scope for Phase 1.
+ * Renders static and scripted text as a FreeType-rasterized texture drawn on
+ * a textured quad. Text effects and multiline layout are not implemented.
  */
 class CText final : virtual public CObject, public Scripting::ScriptableObject {
 public:
@@ -57,6 +50,9 @@ private:
     bool initFreeType ();
     bool loadEmbeddedFont ();
     bool loadSystemFont ();
+    bool loadFallbackFont ();
+    FT_Face glyphFace (uint32_t codepoint) const;
+    float maxTextureWidth () const;
     unsigned int computeEffectivePixelSize () const;
     void initScriptLayer ();
 
@@ -67,6 +63,7 @@ private:
 
     FT_Library m_ftLibrary = nullptr;
     FT_Face m_ftFace = nullptr;
+    FT_Face m_fallbackFace = nullptr;
     std::vector<uint8_t> m_fontData;
 
     GLuint m_texture = 0;

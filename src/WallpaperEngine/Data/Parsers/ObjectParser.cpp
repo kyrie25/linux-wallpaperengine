@@ -158,7 +158,9 @@ TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, O
     return std::make_unique<Text> (
 	std::move (base),
 	TextData {
-	    .text = it.user ("text", project.properties),
+	    .text = UserSettingParser::parse (
+		it.require ("text", "Text object must have text"), project.properties, false, true
+	    ),
 	    .font = it.optional ("font", std::string ()),
 	    .pointSize = it.user ("pointsize", project.properties, 32.0f),
 	    .size = it.optional ("size", glm::vec2 (0.0f)),

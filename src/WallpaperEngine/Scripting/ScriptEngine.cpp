@@ -420,6 +420,10 @@ ScriptLayerHandle ScriptEngine::createLayerScript (
 	<< "    thisScene: thisScene,\n"
 	<< "    _init:    (typeof init    === 'function') ? init    : null,\n"
 	<< "    _destroy: (typeof destroy === 'function') ? destroy : null,\n"
+	<< "    _mediaPropertiesChanged: (typeof mediaPropertiesChanged === 'function') ? mediaPropertiesChanged : null,\n"
+	<< "    _mediaPlaybackChanged:   (typeof mediaPlaybackChanged   === 'function') ? mediaPlaybackChanged   : null,\n"
+	<< "    _mediaTimelineChanged:   (typeof mediaTimelineChanged   === 'function') ? mediaTimelineChanged   : null,\n"
+	<< "    _mediaThumbnailChanged:  (typeof mediaThumbnailChanged  === 'function') ? mediaThumbnailChanged  : null,\n"
 	<< "    _tick:    (typeof update  === 'function')\n"
 	<< "              ? function() {\n"
 	<< "                  var r = update(thisLayer.text);\n"
@@ -488,6 +492,10 @@ void ScriptEngine::tickLayer (ScriptLayerHandle handle, double time, double delt
     if (it != this->m_layerInitialized.end () && !it->second) {
 	callHook ("_init", "layer.init");
 	it->second = true;
+	const auto& media = this->m_mediaSource.getMediaInfo ();
+	if (!media.title.empty () || !media.artist.empty () || media.duration > 0.0) {
+	    this->notifyMediaUpdate (media);
+	}
     }
     callHook ("_tick", "layer.update");
 
@@ -701,6 +709,30 @@ void ScriptEngine::notifyMediaUpdate (const Media::MediaSource::MediaInfo& media
 	JS_FreeValue (ctx, result3);
 	JS_FreeValue (ctx, result4);
     }
+
+    JSValue globalObj = JS_GetGlobalObject (ctx);
+    JSValue layers = JS_GetPropertyStr (ctx, globalObj, "__textLayers");
+    for (const auto& [handle, initialized] : this->m_layerInitialized) {
+	if (!initialized) {
+	    continue;
+	}
+
+	JSValue layer = JS_GetPropertyUint32 (ctx, layers, static_cast<uint32_t> (handle));
+	if (!JS_IsUndefined (layer) && !JS_IsNull (layer)) {
+	    JSValue result1 = this->call (layer, 1, propertiesArgs, "_mediaPropertiesChanged");
+	    JSValue result2 = this->call (layer, 1, playbackArgs, "_mediaPlaybackChanged");
+	    JSValue result3 = this->call (layer, 1, mediaTimelineArgs, "_mediaTimelineChanged");
+	    JSValue result4 = this->call (layer, 1, mediaThumbnailArgs, "_mediaThumbnailChanged");
+
+	    JS_FreeValue (ctx, result1);
+	    JS_FreeValue (ctx, result2);
+	    JS_FreeValue (ctx, result3);
+	    JS_FreeValue (ctx, result4);
+	}
+	JS_FreeValue (ctx, layer);
+    }
+    JS_FreeValue (ctx, layers);
+    JS_FreeValue (ctx, globalObj);
 
     // free all created objects as we don't keep a ref to them anymore
     JS_FreeValue (ctx, propertiesEvent);
