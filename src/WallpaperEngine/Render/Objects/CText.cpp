@@ -327,11 +327,11 @@ float CText::maxTextureWidth () const {
     const float textScale = std::abs (textTransform.scale.x);
     const float horizontalPadding = m_text.padding.x * textScale;
     if (m_text.alignment == "left") {
-	const float textLeft = textTransform.origin.x + m_text.padding.x * textScale;
+	const float textLeft = textTransform.origin.x;
 	return std::max (0.0f, (parentRight - horizontalPadding - textLeft) / textScale);
     }
     if (m_text.alignment == "right") {
-	const float textRight = textTransform.origin.x - m_text.padding.x * textScale;
+	const float textRight = textTransform.origin.x;
 	return std::max (0.0f, (textRight - parentLeft - horizontalPadding) / textScale);
     }
 
@@ -483,13 +483,13 @@ void CText::buildShader () {
 }
 
 void CText::uploadQuadVertices () {
-    // Wallpaper Engine includes the text padding in the authored origin. Our
-    // tightly packed glyph texture omits that border, so restore its offset.
+    // The authored origin already includes horizontal padding. Anchor the
+    // tightly packed glyph texture directly to that origin.
     float left = m_quadSize.x * -0.5f;
     if (m_text.alignment == "left") {
-	left = m_text.padding.x;
+	left = 0.0f;
     } else if (m_text.alignment == "right") {
-	left = -m_text.padding.x - m_quadSize.x;
+	left = -m_quadSize.x;
     }
     const float right = left + m_quadSize.x;
     const float top = m_text.verticalalign == "center" ? -m_text.padding.y : 0.0f;

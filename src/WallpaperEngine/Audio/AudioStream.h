@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 
 extern "C" {
@@ -75,6 +76,8 @@ public:
      * @return If the audio stream can be played or not
      */
     [[nodiscard]] bool isInitialized () const;
+    void setPlaying (bool playing);
+    [[nodiscard]] bool isPlaying () const;
     /**
      * @param newRepeat true = repeat, false = no repeat
      */
@@ -163,6 +166,7 @@ private:
     AudioContext& m_audioContext;
     /** If this stream was properly initialized or not */
     bool m_initialized = false;
+    std::atomic_bool m_playing = true;
     /** Repeat enabled? */
     bool m_repeat = false;
     /** The codec context that contains the original audio format information */

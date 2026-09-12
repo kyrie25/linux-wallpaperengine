@@ -6,7 +6,8 @@
 
 using namespace WallpaperEngine::Render::Objects;
 
-CSound::CSound (Wallpapers::CScene& scene, const Sound& sound) : CObject (scene, sound), m_sound (sound) {
+CSound::CSound (Wallpapers::CScene& scene, const Sound& sound) :
+    CObject (scene, sound), ScriptableObject (scene, sound), m_sound (sound) {
     if (this->getContext ().getApp ().getContext ().settings.audio.enabled) {
 	this->load ();
     }
@@ -28,10 +29,28 @@ void CSound::load () {
 	    = new Audio::AudioStream (this->getScene ().getAudioContext (), this->getAssetLocator ().read (cur));
 
 	stream->setRepeat (this->m_sound.playbackmode.has_value () && this->m_sound.playbackmode == "loop");
+	stream->setPlaying (!this->m_sound.startSilent);
 
 	// add the stream to the context so it can be played
 	this->m_audioStreams.insert_or_assign (this->getScene ().getAudioContext ().addStream (stream), stream);
     }
 }
 
-void CSound::render () { }
+void CSound::render () {
+    if (!m_scriptInitialized) {
+	m_scriptInitialized = true;
+	this->registerProperty ("volume", *m_sound.volume->value);
+    }
+}
+
+void CSound::play () {
+    for (const auto& stream : this->m_audioStreams) {
+	stream.second->setPlaying (true);
+    }
+}
+
+void CSound::stop () {
+    for (const auto& stream : this->m_audioStreams) {
+	stream.second->setPlaying (false);
+    }
+}

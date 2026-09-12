@@ -410,6 +410,10 @@ int AudioStream::getAudioStream () const { return this->m_audioStream; }
 
 bool AudioStream::isInitialized () const { return this->m_initialized; }
 
+void AudioStream::setPlaying (bool playing) { this->m_playing.store (playing); }
+
+bool AudioStream::isPlaying () const { return this->m_playing.load (); }
+
 void AudioStream::setRepeat (const bool newRepeat) { this->m_repeat = newRepeat; }
 
 bool AudioStream::isRepeat () const { return this->m_repeat; }

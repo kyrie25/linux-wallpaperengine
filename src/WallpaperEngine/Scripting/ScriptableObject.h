@@ -21,6 +21,9 @@ public:
 
     const std::map<std::string, PropertyEntry>& getProperties () const;
 
+    virtual void play () { }
+    virtual void stop () { }
+
 protected:
     void registerProperty (const std::string& name, DynamicValue& value);
 

@@ -1,5 +1,6 @@
 #include "ScriptableObjectAdapter.h"
 
+#include <cstring>
 #include <utility>
 
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
@@ -18,6 +19,26 @@ struct OpaqueScriptableObjectAdapter {
     WallpaperEngine::Scripting::ScriptableObject& object;
 };
 
+JSValue scriptableobject_play (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* container = static_cast<OpaqueScriptableObjectAdapter*> (JS_GetAnyOpaque (this_val, &classId));
+    if (!container || container->magic != SCRIPTABLE_OPAQUE_MAGIC) {
+	return JS_EXCEPTION;
+    }
+    container->object.play ();
+    return JS_UNDEFINED;
+}
+
+JSValue scriptableobject_stop (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
+    JSClassID classId = 0;
+    auto* container = static_cast<OpaqueScriptableObjectAdapter*> (JS_GetAnyOpaque (this_val, &classId));
+    if (!container || container->magic != SCRIPTABLE_OPAQUE_MAGIC) {
+	return JS_EXCEPTION;
+    }
+    container->object.stop ();
+    return JS_UNDEFINED;
+}
+
 JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst receiver) {
     JSClassID classId = 0;
 
@@ -34,6 +55,13 @@ JSValue scriptableobject_property_get (JSContext* ctx, JSValueConst obj_val, JSA
     }
 
     ScopeGuard guard ([=] { JS_FreeCString (ctx, name); });
+
+    if (std::strcmp (name, "play") == 0) {
+	return JS_NewCFunction (ctx, scriptableobject_play, "play", 0);
+    }
+    if (std::strcmp (name, "stop") == 0) {
+	return JS_NewCFunction (ctx, scriptableobject_stop, "stop", 0);
+    }
 
     try {
 	// find the property inside, otherwise return undefined
@@ -66,7 +94,14 @@ int scriptableobject_property_set (
 }
 
 ScriptableObjectAdapter::ScriptableObjectAdapter (ScriptEngine& engine, std::string name) :
-    ObjectAdapter (engine), m_exoticMethods (), m_name (std::move (name)) {
+    ObjectAdapter (engine),
+    m_exoticMethods (
+	{
+	    .get_property = scriptableobject_property_get,
+	    .set_property = scriptableobject_property_set,
+	}
+    ),
+    m_name (std::move (name)) {
     this->registerType (
 	{
 	    .class_name = m_name.c_str (),

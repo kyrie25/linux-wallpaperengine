@@ -137,6 +137,8 @@ struct SoundData {
     // TODO: WRITE AN ENUM FOR THIS
     std::optional<std::string> playbackmode;
     std::vector<std::string> sounds;
+    UserSettingUniquePtr volume;
+    bool startSilent;
 };
 
 class Sound : public Object, public SoundData {

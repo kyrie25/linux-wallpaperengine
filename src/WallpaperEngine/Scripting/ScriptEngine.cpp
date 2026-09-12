@@ -587,14 +587,82 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
 	return;
     }
 
+    // Object scripts need APIs that are not implemented by this path yet.
+    // Sound scripts only depend on script properties and scene layer playback.
+    if (!object.is<WallpaperEngine::Render::Objects::CSound> ()) {
+	return;
+    }
+
     auto it = this->m_scriptModules.find (key);
 
     if (it != this->m_scriptModules.end ()) {
 	return;
     }
 
-    // load the script and store it
-    JSValue module = JS_Eval (this->m_context, source->c_str (), source->size (), key.c_str (), JS_EVAL_TYPE_MODULE);
+    JSValue compiledModule = JS_Eval (
+	this->m_context, source->c_str (), source->size (), key.c_str (),
+	JS_EVAL_TYPE_MODULE | JS_EVAL_FLAG_COMPILE_ONLY
+    );
+    if (JS_IsException (compiledModule)) {
+	logJSException (this->m_context, "queueScript.compile");
+	return;
+    }
+
+    auto* moduleDefinition = static_cast<JSModuleDef*> (JS_VALUE_GET_PTR (compiledModule));
+    JS_SetPropertyStr (this->m_context, this->m_globalThis, "thisLayer", this->m_adapters.object->instantiate (object));
+
+    // Script properties are created while the compiled module is evaluated.
+    LoadedModule loadingModule {
+	.value = currentValue,
+	.module = JS_UNDEFINED,
+    };
+    LoadedModule* previousModule = this->m_runningModule;
+    this->m_runningModule = &loadingModule;
+
+    JSValue evaluation = JS_EvalFunction (this->m_context, JS_DupValue (this->m_context, compiledModule));
+    bool evaluationFailed = JS_IsException (evaluation);
+    while (!evaluationFailed && JS_IsPromise (evaluation)
+	   && JS_PromiseState (this->m_context, evaluation) == JS_PROMISE_PENDING) {
+	JSContext* jobContext = nullptr;
+	const int result = JS_ExecutePendingJob (this->m_runtime, &jobContext);
+	if (result < 0) {
+	    logJSException (jobContext == nullptr ? this->m_context : jobContext, "queueScript.eval");
+	    evaluationFailed = true;
+	    break;
+	}
+	if (result == 0) {
+	    break;
+	}
+    }
+    this->m_runningModule = previousModule;
+    if (evaluationFailed) {
+	if (JS_IsException (evaluation)) {
+	    logJSException (this->m_context, "queueScript.eval");
+	}
+	JS_FreeValue (this->m_context, evaluation);
+	JS_FreeValue (this->m_context, compiledModule);
+	return;
+    }
+    if (JS_IsPromise (evaluation) && JS_PromiseState (this->m_context, evaluation) == JS_PROMISE_REJECTED) {
+	JS_Throw (this->m_context, JS_PromiseResult (this->m_context, evaluation));
+	logJSException (this->m_context, "queueScript.eval");
+	evaluationFailed = true;
+    } else if (JS_IsPromise (evaluation) && JS_PromiseState (this->m_context, evaluation) == JS_PROMISE_PENDING) {
+	sLog.error ("ScriptEngine [queueScript.eval]: module evaluation did not finish");
+	evaluationFailed = true;
+    }
+    JS_FreeValue (this->m_context, evaluation);
+    if (evaluationFailed) {
+	JS_FreeValue (this->m_context, compiledModule);
+	return;
+    }
+
+    JSValue module = JS_GetModuleNamespace (this->m_context, moduleDefinition);
+    JS_FreeValue (this->m_context, compiledModule);
+    if (JS_IsException (module)) {
+	logJSException (this->m_context, "queueScript.namespace");
+	return;
+    }
 
     auto inserted = this->m_scriptModules.emplace (
 	key,
@@ -605,10 +673,9 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
     );
 
     if (!inserted.second) {
+	JS_FreeValue (this->m_context, module);
 	return;
     }
-
-    JS_SetPropertyStr (this->m_context, this->m_globalThis, "thisLayer", this->m_adapters.object->instantiate (object));
 
     // script properties do not need update as they're connected directly to the source data
     this->m_runningModule = &inserted.first->second;
@@ -623,6 +690,7 @@ void ScriptEngine::queueScript (const std::string& key, DynamicValue& currentVal
     });
 
     if (JS_IsException (result)) {
+	logJSException (this->m_context, "queueScript.update");
 	return;
     }
 

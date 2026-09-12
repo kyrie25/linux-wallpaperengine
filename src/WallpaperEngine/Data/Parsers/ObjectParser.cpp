@@ -100,7 +100,7 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
     if (imageIt != it.end () && imageIt->is_string ()) {
 	return parseImage (it, project, std::move (basedata), *imageIt);
     } else if (soundIt != it.end () && soundIt->is_array ()) {
-	return parseSound (it, std::move (basedata));
+	return parseSound (it, project, std::move (basedata));
     } else if (particleIt != it.end ()) {
 	return parseParticle (it, project, std::move (basedata));
     } else if (textIt != it.end ()) {
@@ -137,7 +137,7 @@ std::vector<int> ObjectParser::parseDependencies (const JSON& it) {
     return result;
 }
 
-SoundUniquePtr ObjectParser::parseSound (const JSON& it, ObjectData base) {
+SoundUniquePtr ObjectParser::parseSound (const JSON& it, const Project& project, ObjectData base) {
     const auto soundIt = it.require ("sound", "Object must have a sound");
     std::vector<std::string> sounds = {};
 
@@ -150,6 +150,8 @@ SoundUniquePtr ObjectParser::parseSound (const JSON& it, ObjectData base) {
 	SoundData {
 	    .playbackmode = it.optional<std::string> ("playbackmode"),
 	    .sounds = sounds,
+	    .volume = it.user ("volume", project.properties, 1.0f),
+	    .startSilent = it.optional ("startsilent", false),
 	}
     );
 }
