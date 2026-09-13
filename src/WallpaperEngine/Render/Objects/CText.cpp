@@ -492,7 +492,7 @@ void CText::uploadQuadVertices () {
 	left = -m_quadSize.x;
     }
     const float right = left + m_quadSize.x;
-    const float top = m_text.verticalalign == "center" ? -m_text.padding.y : 0.0f;
+    const float top = m_text.verticalalign == "center" ? m_quadSize.y * -0.5f : 0.0f;
     const float bottom = top + m_quadSize.y;
     // With vflip=true (Wayland/GLFW), GL y- = screen top. So the quad bottom (y=0,
     // lower GL y) appears at screen top. UV.v=0 here = FT glyph top → shows at screen top ✓

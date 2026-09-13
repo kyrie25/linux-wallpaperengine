@@ -1588,6 +1588,14 @@ void CImage::updateScreenSpacePosition () {
 const Image& CImage::getImage () const { return this->m_image; }
 
 glm::vec2 CImage::getSize () const {
+    for (const auto& pass : this->getImage ().model->material->passes) {
+	for (const auto& texture : pass->usertextures | std::views::values) {
+	    if (texture == "$mediaThumbnail" || texture == "$mediaPreviousThumbnail") {
+		return this->getImage ().size;
+	    }
+	}
+    }
+
     if (this->m_texture == nullptr) {
 	return this->getImage ().size;
     }

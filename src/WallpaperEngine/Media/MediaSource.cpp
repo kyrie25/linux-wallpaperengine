@@ -28,11 +28,13 @@ MediaSource::~MediaSource () {
 }
 
 void MediaSource::update () {
-    if (std::chrono::steady_clock::now () <= m_nextUpdate) {
+    const auto now = std::chrono::steady_clock::now ();
+    if (now <= m_nextUpdate) {
 	return;
     }
 
     this->performUpdate ();
+    m_nextUpdate = now + m_updateInterval;
 }
 
 std::function<void ()> MediaSource::addMetadataListener (std::function<void (const MediaInfo&)> listener) {

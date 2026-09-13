@@ -1,6 +1,9 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
+
+#include <curl/curl.h>
 
 #include "MediaCover.h"
 
@@ -10,6 +13,46 @@
 
 using namespace WallpaperEngine::FileSystem;
 using namespace WallpaperEngine::FileSystem::Adapters;
+
+namespace {
+size_t appendResponse (char* data, size_t size, size_t count, void* userData) {
+    const size_t bytes = size * count;
+    static_cast<std::string*> (userData)->append (data, bytes);
+    return bytes;
+}
+
+ReadStreamSharedPtr downloadCover (const std::string& url) {
+    static const bool curlInitialized = curl_global_init (CURL_GLOBAL_DEFAULT) == CURLE_OK;
+    if (!curlInitialized) {
+	throw std::filesystem::filesystem_error ("Could not initialize libcurl", url, std::error_code ());
+    }
+
+    CURL* curl = curl_easy_init ();
+    if (curl == nullptr) {
+	throw std::filesystem::filesystem_error ("Could not create libcurl request", url, std::error_code ());
+    }
+
+    std::string contents;
+    curl_easy_setopt (curl, CURLOPT_URL, url.c_str ());
+    curl_easy_setopt (curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt (curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt (curl, CURLOPT_CONNECTTIMEOUT, 3L);
+    curl_easy_setopt (curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt (curl, CURLOPT_WRITEFUNCTION, appendResponse);
+    curl_easy_setopt (curl, CURLOPT_WRITEDATA, &contents);
+
+    const CURLcode result = curl_easy_perform (curl);
+    long status = 0;
+    curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_cleanup (curl);
+
+    if (result != CURLE_OK || status < 200 || status >= 300 || contents.empty ()) {
+	throw std::filesystem::filesystem_error ("Could not download media cover", url, std::error_code ());
+    }
+
+    return std::make_shared<std::istringstream> (std::move (contents), std::ios::in | std::ios::binary);
+}
+} // namespace
 
 ReadStreamSharedPtr MediaCoverAdapter::open (const std::filesystem::path& path) const {
     if (path != "$mediaThumbnail") {
@@ -26,9 +69,11 @@ ReadStreamSharedPtr MediaCoverAdapter::open (const std::filesystem::path& path) 
 
     if (album.starts_with ("file://")) {
 	album = album.substr (7);
+    } else if (album.starts_with ("http://") || album.starts_with ("https://")) {
+	return downloadCover (album);
     } else {
 	throw std::filesystem::filesystem_error (
-	    "Only file:// URLs are supported for media covers", album, std::error_code ()
+	    "Unsupported URL for media cover", album, std::error_code ()
 	);
     }
 
