@@ -66,7 +66,6 @@ private:
 	int parent = -1;
 	glm::mat4 localBind = glm::mat4 (1.0f);
 	glm::mat4 inverseBindWorld = glm::mat4 (1.0f);
-	glm::vec3 vertexCentroidOffset = {};
     };
 
     struct PuppetAnimationFrame {
@@ -86,11 +85,10 @@ private:
 
     bool loadPuppetMesh (const glm::vec2& size);
     bool loadPuppetAnimationData (const std::vector<char>& data, size_t mdlsOffset);
-    void preparePuppetBones (const std::vector<GLushort>& indices);
+    void preparePuppetBones ();
     void updatePuppetAnimation ();
     void evaluatePuppetSkin (const PuppetAnimation& animation, float framePosition, std::vector<glm::mat4>& skin) const;
     [[nodiscard]] glm::vec2 computePuppetCanvasSize (const glm::vec2& size) const;
-    void updatePuppetPositionBuffer (const glm::vec2& size, const std::vector<GLfloat>& rawPositions);
     void updatePuppetScenePositionBuffer (const glm::vec2& size, const std::vector<GLfloat>& rawPositions);
     void setupPuppetGeometryCallback (Effects::CPass* pass, const GLuint* positionBuffer) const;
     ResolvedTransform updateGeometryBuffers ();
@@ -111,13 +109,11 @@ private:
     GLuint m_passSpacePosition;
     GLuint m_texcoordCopy;
     GLuint m_texcoordPass;
-    GLuint m_puppetSpacePosition = GL_NONE;
     GLuint m_puppetSceneSpacePosition = GL_NONE;
     GLuint m_puppetTexCoord = GL_NONE;
     GLuint m_puppetIndices = GL_NONE;
     GLsizei m_puppetIndexCount = 0;
     bool m_hasPuppetMesh = false;
-    bool m_puppetWorldAnchoredBones = false;
     std::vector<GLfloat> m_puppetRawPositions = {};
     std::vector<glm::uvec4> m_puppetVertexBones = {};
     std::vector<glm::vec4> m_puppetVertexWeights = {};

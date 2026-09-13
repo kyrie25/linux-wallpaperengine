@@ -352,9 +352,6 @@ CImage::~CImage () {
     glDeleteBuffers (1, &this->m_passSpacePosition);
     glDeleteBuffers (1, &this->m_texcoordCopy);
     glDeleteBuffers (1, &this->m_texcoordPass);
-    if (this->m_puppetSpacePosition != GL_NONE) {
-	glDeleteBuffers (1, &this->m_puppetSpacePosition);
-    }
     if (this->m_puppetSceneSpacePosition != GL_NONE) {
 	glDeleteBuffers (1, &this->m_puppetSceneSpacePosition);
     }
@@ -401,8 +398,6 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	    sLog.error ("Unsupported puppet model header ", puppetVersion, " in ", *this->getImage ().model->puppet);
 	    return false;
 	}
-	this->m_puppetWorldAnchoredBones = puppetVersion == "MDLV0021";
-
 	const size_t mdlsOffset = [&data] () -> size_t {
 	    for (size_t offset = markerSize; offset + strlen ("MDLS") < data.size (); offset++) {
 		if (std::memcmp (data.data () + offset, "MDLS", strlen ("MDLS")) == 0) {
@@ -482,11 +477,10 @@ bool CImage::loadPuppetMesh (const glm::vec2& size) {
 	    this->m_puppetBones.clear ();
 	    this->m_puppetAnimations.clear ();
 	}
-	this->preparePuppetBones (indices);
+	this->preparePuppetBones ();
 
 	// autosize: the canvas may need to grow so the animated mesh never clips
 	this->m_puppetSize = this->computePuppetCanvasSize (size);
-	this->updatePuppetPositionBuffer (this->m_puppetSize, this->m_puppetRawPositions);
 
 	glGenBuffers (1, &this->m_puppetTexCoord);
 	glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetTexCoord);
@@ -670,72 +664,15 @@ bool CImage::loadPuppetAnimationData (const std::vector<char>& data, const size_
     return !this->m_puppetAnimations.empty ();
 }
 
-void CImage::preparePuppetBones (const std::vector<GLushort>& indices) {
+void CImage::preparePuppetBones () {
     if (this->m_puppetBones.empty ()) {
 	return;
-    }
-
-    if (this->m_puppetWorldAnchoredBones) {
-	std::vector<glm::dvec3> weightedPositions (this->m_puppetBones.size (), glm::dvec3 (0.0));
-	std::vector<double> totalWeights (this->m_puppetBones.size (), 0.0);
-	for (size_t index = 0; index + 2 < indices.size (); index += 3) {
-	    const size_t a = indices[index];
-	    const size_t b = indices[index + 1];
-	    const size_t c = indices[index + 2];
-	    const size_t vertexCount = this->m_puppetRawPositions.size () / 3;
-	    if (a >= vertexCount || b >= vertexCount || c >= vertexCount) {
-		continue;
-	    }
-
-	    const auto vertex = [this] (const size_t vertexIndex) {
-		return glm::dvec3 (
-		    this->m_puppetRawPositions[vertexIndex * 3], this->m_puppetRawPositions[vertexIndex * 3 + 1],
-		    this->m_puppetRawPositions[vertexIndex * 3 + 2]
-		);
-	    };
-	    const glm::dvec3 p0 = vertex (a);
-	    const glm::dvec3 p1 = vertex (b);
-	    const glm::dvec3 p2 = vertex (c);
-	    const glm::dvec3 centroid = (p0 + p1 + p2) / 3.0;
-	    const double area = glm::length (glm::cross (p1 - p0, p2 - p0)) * 0.5;
-	    if (area <= 0.0) {
-		continue;
-	    }
-
-	    const size_t corners[] = { a, b, c };
-	    for (const size_t corner : corners) {
-		for (int component = 0; component < 4; component++) {
-		    const float weight = this->m_puppetVertexWeights[corner][component];
-		    const uint32_t bone = this->m_puppetVertexBones[corner][component];
-		    if (weight <= 0.0f || bone >= this->m_puppetBones.size ()) {
-			continue;
-		    }
-
-		    const double triangleWeight = (area / 3.0) * static_cast<double> (weight);
-		    weightedPositions[bone] += centroid * triangleWeight;
-		    totalWeights[bone] += triangleWeight;
-		}
-	    }
-	}
-
-	for (size_t index = 0; index < this->m_puppetBones.size (); index++) {
-	    if (totalWeights[index] <= 0.0) {
-		continue;
-	    }
-	    const glm::vec3 centroid = glm::vec3 (weightedPositions[index] / totalWeights[index]);
-	    this->m_puppetBones[index].vertexCentroidOffset
-		= centroid - glm::vec3 (this->m_puppetBones[index].localBind[3]);
-	}
     }
 
     std::vector<glm::mat4> bindWorld (this->m_puppetBones.size ());
     for (size_t index = 0; index < this->m_puppetBones.size (); index++) {
 	const auto& bone = this->m_puppetBones[index];
-	if (this->m_puppetWorldAnchoredBones) {
-	    bindWorld[index] = glm::translate (glm::mat4 (1.0f), bone.vertexCentroidOffset) * bone.localBind;
-	} else {
-	    bindWorld[index] = bone.parent >= 0 ? bindWorld[bone.parent] * bone.localBind : bone.localBind;
-	}
+	bindWorld[index] = bone.parent >= 0 ? bindWorld[bone.parent] * bone.localBind : bone.localBind;
 	this->m_puppetBones[index].inverseBindWorld = glm::inverse (bindWorld[index]);
     }
 }
@@ -821,7 +758,6 @@ void CImage::updatePuppetAnimation () {
 	// FBO ortho projection's [-1, 1] clip range, cutting the mesh
 	this->m_puppetSkinnedPositions[index * 3 + 2] = 0.0f;
     }
-    this->updatePuppetPositionBuffer (this->m_puppetSize, this->m_puppetSkinnedPositions);
     this->updatePuppetScenePositionBuffer (this->m_puppetSize, this->m_puppetSkinnedPositions);
 }
 
@@ -866,15 +802,7 @@ void CImage::evaluatePuppetSkin (
 	    local = glm::scale (local, scale);
 	}
 
-	if (this->m_puppetWorldAnchoredBones) {
-	    local = glm::translate (glm::mat4 (1.0f), bone.vertexCentroidOffset) * local;
-	    const glm::mat4 parentDelta = bone.parent >= 0
-		? world[bone.parent] * this->m_puppetBones[bone.parent].inverseBindWorld
-		: glm::mat4 (1.0f);
-	    world[index] = parentDelta * local;
-	} else {
-	    world[index] = bone.parent >= 0 ? world[bone.parent] * local : local;
-	}
+	world[index] = bone.parent >= 0 ? world[bone.parent] * local : local;
 	skin[index] = world[index] * this->m_puppetBones[index].inverseBindWorld;
     }
 }
@@ -929,26 +857,6 @@ glm::vec2 CImage::computePuppetCanvasSize (const glm::vec2& size) const {
     }
 
     return { std::ceil (maxAbsX) * 2.0f, std::ceil (maxAbsY) * 2.0f };
-}
-
-void CImage::updatePuppetPositionBuffer (const glm::vec2& size, const std::vector<GLfloat>& rawPositions) {
-    if (rawPositions.empty ()) {
-	return;
-    }
-
-    std::vector<GLfloat> positions;
-    positions.reserve (rawPositions.size ());
-    for (size_t index = 0; index + 2 < rawPositions.size (); index += 3) {
-	positions.push_back (size.x / 2.0f + rawPositions[index]);
-	positions.push_back (size.y / 2.0f - rawPositions[index + 1]);
-	positions.push_back (rawPositions[index + 2]);
-    }
-
-    if (this->m_puppetSpacePosition == GL_NONE) {
-	glGenBuffers (1, &this->m_puppetSpacePosition);
-    }
-    glBindBuffer (GL_ARRAY_BUFFER, this->m_puppetSpacePosition);
-    glBufferData (GL_ARRAY_BUFFER, positions.size () * sizeof (GLfloat), positions.data (), GL_DYNAMIC_DRAW);
 }
 
 void CImage::updatePuppetScenePositionBuffer (
@@ -1238,9 +1146,7 @@ void CImage::setupPasses () {
 	std::shared_ptr<const CFBO> prevDrawTo = drawTo;
 	bool writesToTarget = false;
 	const bool isFirstPass = first;
-	GLuint spacePosition = (isFirstPass)
-	    ? (this->m_hasPuppetMesh ? this->m_puppetSpacePosition : this->getCopySpacePosition ())
-	    : this->getPassSpacePosition ();
+	GLuint spacePosition = isFirstPass ? this->getCopySpacePosition () : this->getPassSpacePosition ();
 	const glm::mat4* projection
 	    = (isFirstPass) ? &this->m_modelViewProjectionCopy : &this->m_modelViewProjectionPass;
 	const glm::mat4* inverseProjection
@@ -1256,17 +1162,16 @@ void CImage::setupPasses () {
 	const bool isFinalPass = !writesToTarget && this->shouldRenderFinalPass (std::next (cur) == end);
 	if (isFinalPass) {
 	    // TODO: PROPERLY CHECK EFFECT'S VISIBILITY AND TAKE IT INTO ACCOUNT
-	    spacePosition = this->getSceneSpacePosition ();
+	    spacePosition = this->m_hasPuppetMesh ? this->m_puppetSceneSpacePosition : this->getSceneSpacePosition ();
 	    drawTo = this->getScene ().getFBO ();
 	    projection = &this->m_modelViewProjectionScreen;
 	    inverseProjection = &this->m_modelViewProjectionScreenInverse;
 	}
 
-	if (isFirstPass && this->m_hasPuppetMesh) {
+	// Effects and their masks use the source atlas coordinates; warp the fully effected atlas into the scene.
+	if (isFinalPass && this->m_hasPuppetMesh) {
 	    pass->setBlendingMode (BlendingMode_Translucent);
-	    this->setupPuppetGeometryCallback (
-		pass, isFinalPass ? &this->m_puppetSceneSpacePosition : &this->m_puppetSpacePosition
-	    );
+	    this->setupPuppetGeometryCallback (pass, &this->m_puppetSceneSpacePosition);
 	}
 
 	pass->setDestination (drawTo);
@@ -1538,7 +1443,6 @@ CImage::ResolvedTransform CImage::updateGeometryBuffers () {
     this->m_size = size;
     if (this->m_hasPuppetMesh && size != previousSize) {
 	this->m_puppetSize = size;
-	this->updatePuppetPositionBuffer (size, this->m_puppetRawPositions);
     }
 
     this->updateScenePosition (origin, size, scale, sceneWidth, sceneHeight);
