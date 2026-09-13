@@ -569,11 +569,25 @@ void CText::render () {
     // gl_y = scene_h/2 - origin.y, corrected back by the vflip on presentation.
     const float scene_w = getScene ().getCamera ().getWidth ();
     const float scene_h = getScene ().getCamera ().getHeight ();
-    const glm::vec3 gl_origin = {
+    glm::vec3 gl_origin = {
 	transform.origin.x - scene_w * 0.5f,
 	scene_h * 0.5f - transform.origin.y,
 	transform.origin.z,
     };
+
+    if (this->getScene ().getScene ().camera.parallax.enabled
+	&& !this->getScene ().getContext ().getApp ().getContext ().settings.mouse.disableparallax
+	&& m_text.parent.has_value ()) {
+	const auto* parent = dynamic_cast<const CImage*> (this->getScene ().getObject (*m_text.parent));
+	if (parent != nullptr) {
+	    const double parallaxAmount = this->getScene ().getScene ().camera.parallax.amount->value->getFloat ();
+	    const glm::vec2 depth = parent->getImage ().parallaxDepth->value->getVec2 ();
+	    const glm::vec2* displacement = this->getScene ().getParallaxDisplacement ();
+	    const float referenceSize = static_cast<float> (this->getScene ().getWidth ());
+	    gl_origin.x += (depth.x + parallaxAmount) * displacement->x * referenceSize;
+	    gl_origin.y += (depth.y + parallaxAmount) * displacement->y * referenceSize;
+	}
+    }
 
     glm::mat4 model = glm::translate (glm::mat4 (1.0f), gl_origin);
     model = glm::rotate (model, transform.angle, glm::vec3 (0.0f, 0.0f, 1.0f));
