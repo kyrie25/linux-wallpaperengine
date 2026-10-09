@@ -1270,6 +1270,8 @@ void CImage::render () {
 	this->updatePuppetAnimation ();
     }
 
+    this->m_texture->update ();
+
 #if !NDEBUG
     std::string str = "Image ";
 

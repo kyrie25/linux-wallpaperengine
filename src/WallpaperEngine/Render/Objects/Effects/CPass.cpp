@@ -6,6 +6,8 @@
 
 #include "WallpaperEngine/Data/Model/Effect.h"
 #include "WallpaperEngine/Data/Model/Material.h"
+#include "WallpaperEngine/Data/Model/Project.h"
+#include "WallpaperEngine/Data/Model/Property.h"
 
 #include "WallpaperEngine/Render/CFBO.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
@@ -694,6 +696,18 @@ void CPass::setupAttributes () {
     this->addAttribute ("a_Position", GL_FLOAT, 3, &this->a_Position);
 }
 
+std::shared_ptr<const TextureProvider> CPass::resolveUserTexture (const std::string& name) const {
+    const auto& properties = this->m_renderable.getScene ().getScene ().project.properties;
+    const auto property = properties.find (name);
+
+    if (property == properties.end ()) {
+	return this->getContext ().resolveTexture (name);
+    }
+
+    const auto& filename = property->second->getString ();
+    return filename.empty () ? nullptr : this->getContext ().resolveTexture (filename);
+}
+
 void CPass::setupTextureUniforms () {
     // first set default textures extracted from the shader
     // vertex shader doesn't seem to have texture info
@@ -753,9 +767,10 @@ void CPass::setupTextureUniforms () {
 
     for (const auto& [index, textureName] : this->m_pass.usertextures) {
 	try {
-	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
-		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+	    auto texture = this->resolveUserTexture (textureName);
+	    if (texture == nullptr) {
+		continue;
+	    }
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
@@ -790,9 +805,10 @@ void CPass::setupTextureUniforms () {
 
     for (const auto& [index, textureName] : this->m_override.usertextures) {
 	try {
-	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
-		? this->resolveFBO (textureName)
-		: this->getContext ().resolveTexture (textureName);
+	    auto texture = this->resolveUserTexture (textureName);
+	    if (texture == nullptr) {
+		continue;
+	    }
 
 	    const auto it = this->m_textures.find (index);
 	    const auto chain = std::make_shared<TextureChainEntry> (TextureChainEntry {
