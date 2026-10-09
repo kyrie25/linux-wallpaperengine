@@ -1470,14 +1470,14 @@ void CImage::updateScreenSpacePosition () {
 	= this->getScene ().getCamera ().getProjection () * this->getScene ().getCamera ().getLookAt () * rotModel;
 
     // Apply parallax displacement if enabled
-    if (this->getScene ().getScene ().camera.parallax.enabled
+    if (this->getScene ().getScene ().camera.parallax.enabled->value->getBool ()
 	&& !this->getScene ().getContext ().getApp ().getContext ().settings.mouse.disableparallax) {
-	const double parallaxAmount = this->getScene ().getScene ().camera.parallax.amount->value->getFloat ();
 	const glm::vec2 depth = this->getImage ().parallaxDepth->value->getVec2 ();
 	const glm::vec2* displacement = this->getScene ().getParallaxDisplacement ();
 	const float referenceSize = static_cast<float> (this->getScene ().getWidth ());
-	float x = (depth.x + parallaxAmount) * displacement->x * referenceSize;
-	float y = (depth.y + parallaxAmount) * displacement->y * referenceSize;
+	// The scene displacement already includes the global amount; zero depth must remain stationary.
+	float x = depth.x * displacement->x * referenceSize;
+	float y = depth.y * displacement->y * referenceSize;
 	mvp = glm::translate (mvp, { x, y, 0.0f });
     }
 
@@ -1493,10 +1493,8 @@ const Image& CImage::getImage () const { return this->m_image; }
 
 glm::vec2 CImage::getSize () const {
     for (const auto& pass : this->getImage ().model->material->passes) {
-	for (const auto& texture : pass->usertextures | std::views::values) {
-	    if (texture == "$mediaThumbnail" || texture == "$mediaPreviousThumbnail") {
-		return this->getImage ().size;
-	    }
+	if (!pass->usertextures.empty () && this->getImage ().size.x > 0.0f && this->getImage ().size.y > 0.0f) {
+	    return this->getImage ().size;
 	}
     }
 

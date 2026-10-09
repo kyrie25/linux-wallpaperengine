@@ -6,6 +6,8 @@
 
 #include "WallpaperEngine/Data/Model/Effect.h"
 #include "WallpaperEngine/Data/Model/Material.h"
+#include "WallpaperEngine/Data/Model/Project.h"
+#include "WallpaperEngine/Data/Model/Property.h"
 
 #include "WallpaperEngine/Render/CFBO.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
@@ -618,7 +620,10 @@ void CPass::setupShaders () {
 
     TextureMap passTextures = this->m_pass.textures;
     for (const auto& [index, texture] : this->m_pass.usertextures) {
-	passTextures.insert_or_assign (index, texture);
+	const auto name = this->resolveUserTextureName (texture);
+	if (!name.empty ()) {
+	    passTextures.insert_or_assign (index, name);
+	}
     }
 
     this->m_shader = new Render::Shaders::Shader (
@@ -694,6 +699,12 @@ void CPass::setupAttributes () {
     this->addAttribute ("a_Position", GL_FLOAT, 3, &this->a_Position);
 }
 
+std::string CPass::resolveUserTextureName (const std::string& name) const {
+    const auto& properties = this->m_renderable.getScene ().getScene ().project.properties;
+    const auto property = properties.find (name);
+    return property == properties.end () ? name : property->second->getString ();
+}
+
 void CPass::setupTextureUniforms () {
     // first set default textures extracted from the shader
     // vertex shader doesn't seem to have texture info
@@ -751,7 +762,11 @@ void CPass::setupTextureUniforms () {
 	}
     }
 
-    for (const auto& [index, textureName] : this->m_pass.usertextures) {
+    for (const auto& [index, propertyName] : this->m_pass.usertextures) {
+	const auto textureName = this->resolveUserTextureName (propertyName);
+	if (textureName.empty ()) {
+	    continue;
+	}
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)
@@ -788,7 +803,11 @@ void CPass::setupTextureUniforms () {
 	}
     }
 
-    for (const auto& [index, textureName] : this->m_override.usertextures) {
+    for (const auto& [index, propertyName] : this->m_override.usertextures) {
+	const auto textureName = this->resolveUserTextureName (propertyName);
+	if (textureName.empty ()) {
+	    continue;
+	}
 	try {
 	    auto texture = textureName.find ("_rt_") == 0 || textureName.find ("_alias_") == 0
 		? this->resolveFBO (textureName)

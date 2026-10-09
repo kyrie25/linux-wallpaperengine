@@ -12,8 +12,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <limits>
+#include <stb_image.h>
 
 using namespace WallpaperEngine::Render;
 using namespace WallpaperEngine::FileSystem;
@@ -59,6 +62,38 @@ TextureCache::~TextureCache () { this->m_mediaCallback (); }
 std::shared_ptr<const TextureProvider> TextureCache::resolve (const std::string& filename) {
     if (const auto found = this->m_textureCache.find (filename); found != this->m_textureCache.end ()) {
 	return found->second;
+    }
+
+    if (std::filesystem::path (filename).is_absolute ()) {
+	int width = 0, height = 0, channels = 0;
+	const std::unique_ptr<stbi_uc, decltype (&stbi_image_free)> pixels (
+	    stbi_load (filename.c_str (), &width, &height, &channels, 4), stbi_image_free
+	);
+	if (pixels == nullptr || width <= 0 || height <= 0
+	    || static_cast<uint64_t> (width) * height * 4 > std::numeric_limits<int>::max ()) {
+	    throw AssetLoadException (
+		"Cannot decode external image", filename, std::make_error_code (std::errc::invalid_argument)
+	    );
+	}
+
+	// Reuse the packed-texture uploader with a single decoded RGBA mipmap.
+	auto mipmap = std::make_shared<Mipmap> ();
+	mipmap->width = width;
+	mipmap->height = height;
+	mipmap->uncompressedSize = width * height * 4;
+	mipmap->uncompressedData = std::make_unique<char[]> (mipmap->uncompressedSize);
+	std::memcpy (mipmap->uncompressedData.get (), pixels.get (), mipmap->uncompressedSize);
+
+	auto header = std::make_unique<Texture> ();
+	header->width = header->textureWidth = width;
+	header->height = header->textureHeight = height;
+	header->flags = TextureFlags_ClampUVs;
+	header->format = TextureFormat_ARGB8888;
+	header->imageCount = 1;
+	header->images.emplace (0, MipmapList { mipmap });
+	auto texture = std::make_shared<CTexture> (this->getContext (), std::move (header));
+	this->store (filename, texture);
+	return texture;
     }
 
     // search for the texture in all the different containers just in case

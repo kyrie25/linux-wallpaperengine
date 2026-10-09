@@ -168,6 +168,8 @@ private:
     void renderGeometry () const;
     void cleanupRenderSetup ();
 
+    [[nodiscard]] std::string resolveUserTextureName (const std::string& name) const;
+
     std::shared_ptr<const TextureProvider> resolveTexture (
 	std::shared_ptr<const TextureProvider> expected, int index,
 	std::shared_ptr<const TextureProvider> previous = nullptr

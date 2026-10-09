@@ -211,14 +211,18 @@ ObjectParser::parseImage (const JSON& it, const Project& project, ObjectData bas
 
 	if (instanceTextures.has_value ()) {
 	    const auto parsed = TextureParser::parseTextureMap (*instanceTextures);
-	    firstPass.textures.insert (parsed.begin (), parsed.end ());
+	    for (const auto& [index, texture] : parsed) {
+		firstPass.textures.insert_or_assign (index, texture);
+	    }
 	}
 
 	const auto instanceUserTextures = instance->optional ("usertextures");
 
 	if (instanceUserTextures.has_value ()) {
 	    const auto parsed = TextureParser::parseTextureMap (*instanceUserTextures);
-	    firstPass.usertextures.insert (parsed.begin (), parsed.end ());
+	    for (const auto& [index, texture] : parsed) {
+		firstPass.usertextures.insert_or_assign (index, texture);
+	    }
 	}
     }
 

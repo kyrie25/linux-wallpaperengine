@@ -227,8 +227,8 @@ void GLPlayer::init () {
 	sLog.exception ("Could not initialize mpv context");
     }
 
-    // ensure video is muted and plays in a loop
-    mpv_set_property_string (this->m_handle, "hwdec", "auto");
+    // Embedded textures need no hardware decoder context per image, which can exhaust GPU memory.
+    mpv_set_property_string (this->m_handle, "hwdec", this->m_stream.has_value () ? "no" : "auto");
     mpv_set_property_string (this->m_handle, "loop", "inf");
     mpv_set_property (this->m_handle, "volume", MPV_FORMAT_DOUBLE, &this->m_volume);
 

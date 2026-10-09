@@ -18,12 +18,7 @@ WaylandMouseInput::WaylandMouseInput (const WallpaperEngine::Render::Drivers::Wa
 
 void WaylandMouseInput::update () {
     if (!this->m_waylandDriver.getApp ().getContext ().settings.mouse.enabled) {
-	this->m_pos = { 0, 0 };
-	return;
-    }
-
-    if (m_waylandDriver.viewportInFocus && m_waylandDriver.viewportInFocus->rendering) {
-	this->m_pos = m_waylandDriver.viewportInFocus->mousePos;
+	this->m_globalCursorPosition.reset ();
 	return;
     }
 
@@ -33,52 +28,33 @@ void WaylandMouseInput::update () {
     }
     this->m_lastHyprlandQuery = now;
 
-    const auto globalCursor = this->queryHyprlandCursorPosition ();
-    if (!globalCursor.has_value ()) {
-	this->m_pos = { 0, 0 };
-	return;
-    }
-
-    for (const auto* viewport : this->m_waylandDriver.m_screens) {
-	if (!viewport || viewport->size.x <= 0 || viewport->size.y <= 0) {
-	    continue;
-	}
-
-	const double localX = globalCursor->x - viewport->position.x;
-	const double localY = globalCursor->y - viewport->position.y;
-	if (localX < 0.0 || localY < 0.0 || localX > viewport->size.x || localY > viewport->size.y) {
-	    continue;
-	}
-
-	this->m_pos = { localX * viewport->scale, (viewport->size.y - localY) * viewport->scale };
-	return;
-    }
-
-    this->m_pos = { 0, 0 };
+    this->m_globalCursorPosition = this->queryHyprlandCursorPosition ();
 }
 
 glm::dvec2 WaylandMouseInput::position () const {
-    if (!this->m_waylandDriver.getApp ().getContext ().settings.mouse.enabled) {
-	return { 0, 0 };
-    }
-
     const auto* viewport = this->getActiveOutputViewport ();
 
     if (!viewport) {
 	return { 0, 0 };
     }
 
-    if (viewport == m_waylandDriver.viewportInFocus) {
-	return viewport->mousePos;
-    }
-
-    if (viewport->mousePos.x != 0 || viewport->mousePos.y != 0) {
-	return viewport->mousePos;
+    if (this->m_waylandDriver.getApp ().getContext ().settings.mouse.enabled) {
+	if (viewport == m_waylandDriver.viewportInFocus) {
+	    return viewport->mousePos;
+	}
+	if (this->m_globalCursorPosition.has_value () && viewport->logicalSize.x > 0 && viewport->logicalSize.y > 0) {
+	    // Hyprland reports logical desktop coordinates; convert for the output currently rendering.
+	    const glm::dvec2 local = *this->m_globalCursorPosition - glm::dvec2 (viewport->globalPosition);
+	    return {
+		glm::clamp (local.x / viewport->logicalSize.x, 0.0, 1.0) * viewport->viewport.z,
+		(1.0 - glm::clamp (local.y / viewport->logicalSize.y, 0.0, 1.0)) * viewport->viewport.w,
+	    };
+	}
     }
 
     return {
-	static_cast<double> (viewport->size.x * viewport->scale) / 2.0,
-	static_cast<double> (viewport->size.y * viewport->scale) / 2.0,
+	static_cast<double> (viewport->viewport.z) / 2.0,
+	static_cast<double> (viewport->viewport.w) / 2.0,
     };
 }
 

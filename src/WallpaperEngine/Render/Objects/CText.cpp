@@ -575,17 +575,16 @@ void CText::render () {
 	transform.origin.z,
     };
 
-    if (this->getScene ().getScene ().camera.parallax.enabled
+    if (this->getScene ().getScene ().camera.parallax.enabled->value->getBool ()
 	&& !this->getScene ().getContext ().getApp ().getContext ().settings.mouse.disableparallax
 	&& m_text.parent.has_value ()) {
 	const auto* parent = dynamic_cast<const CImage*> (this->getScene ().getObject (*m_text.parent));
 	if (parent != nullptr) {
-	    const double parallaxAmount = this->getScene ().getScene ().camera.parallax.amount->value->getFloat ();
 	    const glm::vec2 depth = parent->getImage ().parallaxDepth->value->getVec2 ();
 	    const glm::vec2* displacement = this->getScene ().getParallaxDisplacement ();
 	    const float referenceSize = static_cast<float> (this->getScene ().getWidth ());
-	    gl_origin.x += (depth.x + parallaxAmount) * displacement->x * referenceSize;
-	    gl_origin.y += (depth.y + parallaxAmount) * displacement->y * referenceSize;
+	    gl_origin.x += depth.x * displacement->x * referenceSize;
+	    gl_origin.y += depth.y * displacement->y * referenceSize;
 	}
     }
 
