@@ -23,6 +23,28 @@ Bring **Wallpaper Engine**-style live wallpapers to Linux! This project allows y
 > 
 > If you have any fixes that you want to submit, I'll gladly look into them. 
 
+## Fork highlights
+
+Compared with Almamu's upstream `main`, this branch adds:
+
+- **Puppet compatibility**: skeletal animation, rig blending/physics/IK, position morphs, clipping, part ordering, and optional texture channels, with fixes for old rigs, padding, and effect composition.
+- **Stable scene widgets**: native image/text scripts, shaped text and color emoji, parent/parallax alignment, and transform ownership repairs that address drifting components.
+- **Media and custom images**: active-player metadata, artwork arriving after startup, local/WebP/HTTP covers, default/custom image loading, and GIF/video playback respecting encoded timing and authored size.
+- **Native SceneScript extensions**: owned timers/audio buffers, local storage, layer lifecycle, material/effect controls, atlas playback, and partial camera/cursor APIs.
+- **Wayland controls and reliability**: crop alignment, configurable anti-aliasing, live FPS/volume/layout updates, stereo spectra, bounded frame pacing, and web viewport/shutdown fixes.
+
+The [complete feature and fix catalog](docs/fork-features.md) records the upstream
+baseline and earlier repairs. [Port adaptations](docs/port-adaptations.md) records
+source attribution, regression checks, and limitations. The published implementation
+passed 1,551 assertions in 99 cases plus isolated Wayland integration checks;
+this does not establish universal Windows parity. Full 3D/HDR, portions of
+SceneScript, and matching Windows blink/hair cadence remain incomplete or unverified.
+
+The [dots-hyprland fork](https://github.com/kyrie25/dots-hyprland) supplies the
+Quickshell settings UI, independent monitor wallpapers/mute, startup grace, and
+automatic pause/stop/mute policies. The renderer can also run without Quickshell;
+the adapted features do not require KDE.
+
 ---
 
 ## 📦 System Requirements
@@ -40,6 +62,11 @@ To compile and run this, you'll need:
 - MPV
 - PulseAudio
 - FFTW3
+- curl and HarfBuzz (fork additions); msdfgen is a pinned submodule
+
+The dotfiles integration uses an Arch package with X11 discovery disabled.
+The inherited distro commands below describe the upstream dependency set;
+install the additional fork dependencies when building this branch.
 
 Install the required dependencies on Ubuntu/Debian-based systems:
 
@@ -79,7 +106,9 @@ You can install this directly from the AUR using your favorite AUR helper:
 yay -S linux-wallpaperengine-git
 ```
 
-> This installs the latest development version.
+> This AUR package installs the upstream development version. For this fork's
+> fixes, use the dots-hyprland fork's pinned Arch package or build this branch
+> from source. See the [integration guide](https://github.com/kyrie25/dots-hyprland/blob/main/docs/fork-features.md#installing-this-fork).
 
 **Note:** You’ll still need assets from the official Wallpaper Engine (via Steam). See below for details.
 
@@ -126,12 +155,12 @@ linux-wallpaperengine --assets-dir /path/to/assets
 
 ### 2. Build from Source
 
-> ⚠️ If you installed the AUR package mentioned before, you can skip this step.
+> The ordinary AUR package does not include this branch's fixes.
 
 Clone the repo:
 
 ```bash
-git clone --recurse-submodules https://github.com/Almamu/linux-wallpaperengine.git
+git clone --branch ii-puppet-multimonitor --recurse-submodules https://github.com/kyrie25/linux-wallpaperengine.git
 cd linux-wallpaperengine
 ```
 
@@ -142,6 +171,9 @@ mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE='Release' ..
 make
 ```
+
+For the Wayland-only build used by the integration, add
+`-DCMAKE_DISABLE_FIND_PACKAGE_X11=ON` to the CMake command.
 
 Once the build process is finished, this should create a new `output` folder containing the app and all the required
 support files to run.
@@ -164,6 +196,9 @@ You can use either:
 
 ### What about a GUI?
 
+This fork integrates with the [dots-hyprland Quickshell settings](https://github.com/kyrie25/dots-hyprland/blob/main/docs/fork-features.md#wallpaper-engine-on-wayland)
+for project selection, properties, monitor layouts, playback, and automatic behavior.
+
 Implementing a GUI is out of scope for now.
 There's a few developers that decided to focus on this and created their own.
 If you're one of those developers, feel free to open an issue to get your project included here!
@@ -183,6 +218,7 @@ If you're one of those developers, feel free to open an issue to get your projec
 | `--noautomute` | Don't mute when other apps play audio |
 | `--no-audio-processing` | Disable audio reactive features |
 | `--fps <val>` | Limit frame rate |
+| `--control-file <path>` | Live JSON updates for FPS, volume, scaling, and alignment; see the [fork guide](docs/fork-features.md#output-layout-and-live-controls) |
 | `--anti-aliasing <samples>` | Multisample anti-aliasing: `0`, `2`, `4`, or `8` |
 | `--window <XxYxWxH>` | Run in windowed mode with custom size/position |
 | `--screen-root <screen>` | Set as background for specific screen |

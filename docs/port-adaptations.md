@@ -1,5 +1,8 @@
 # Wayland port adaptations
 
+For the full upstream comparison, including fixes predating these ports, see
+[Fork features and fixes](fork-features.md).
+
 These changes adapt DE-independent code from the GPL-3.0 renderer forks below.
 They retain this fork's Quickshell integration, per-output process ownership,
 media-player selection, remote artwork, custom-image sizing, and timed software

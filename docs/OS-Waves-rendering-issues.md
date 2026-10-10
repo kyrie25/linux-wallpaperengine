@@ -3,6 +3,11 @@
 Investigation of rendering differences between linux-wallpaperengine and the native
 Windows Wallpaper Engine for the OS Waves wallpaper (workshop ID 3014738359).
 
+> Historical investigation: the missing text and script support described below
+> predates this fork's native text/SceneScript implementation. See
+> [Fork features and fixes](fork-features.md) for current implemented behavior and
+> remaining limits; this report is not a current support matrix.
+
 ## Wallpaper Structure
 
 The wallpaper consists of 8 scene objects rendered in this order:
