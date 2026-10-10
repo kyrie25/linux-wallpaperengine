@@ -1,5 +1,8 @@
 #include "AudioDriver.h"
 
+extern float g_Time;
+extern float g_TimeLast;
+
 namespace WallpaperEngine::Audio::Drivers {
 AudioDriver::AudioDriver (
     Application::ApplicationContext& applicationContext, Detectors::AudioPlayingDetector& detector,
@@ -11,7 +14,7 @@ AudioDriver::AudioDriver (
 }
 
 void AudioDriver::update () {
-    this->m_recorder.update ();
+    this->m_recorder.update (std::max (g_Time - g_TimeLast, 0.0f));
     this->m_detector.update ();
 }
 

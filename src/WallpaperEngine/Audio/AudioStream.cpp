@@ -493,7 +493,8 @@ int AudioStream::resampleAudio (uint8_t* out_buf, const int out_size) {
 
     out_nb_channels = av_get_channel_layout_nb_channels (out_channel_layout);
 #else
-    out_nb_channels = this->getContext ()->ch_layout.nb_channels;
+    // Allocate for the resampler's output layout, not the source sound's layout.
+    out_nb_channels = this->m_audioContext.getChannels ();
 #endif
     ret = av_samples_alloc_array_and_samples (
 	&resampled_data, &out_linesize, out_nb_channels, out_nb_samples, this->m_audioContext.getFormat (), 0

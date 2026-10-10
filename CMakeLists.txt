@@ -345,6 +345,10 @@ set(COMMON_SOURCES
     src/WallpaperEngine/Audio/Drivers/AudioDriver.h
     src/WallpaperEngine/Audio/Drivers/SDLAudioDriver.cpp
     src/WallpaperEngine/Audio/Drivers/SDLAudioDriver.h
+    src/WallpaperEngine/Audio/SpectrumAnalyzer.cpp
+    src/WallpaperEngine/Audio/SpectrumAnalyzer.h
+    src/WallpaperEngine/Audio/SpectrumProcessor.cpp
+    src/WallpaperEngine/Audio/SpectrumProcessor.h
     src/WallpaperEngine/Audio/AudioContext.cpp
     src/WallpaperEngine/Audio/AudioContext.h
     src/WallpaperEngine/Audio/AudioStream.cpp
@@ -577,7 +581,9 @@ if(BUILD_TESTING)
         src/WallpaperEngine/Testing/Cases/JsonVectorParsing.cpp
         src/WallpaperEngine/Testing/Cases/TextureParser.cpp
         src/WallpaperEngine/Testing/Cases/AuthoringJson.cpp
-        src/WallpaperEngine/Testing/Cases/EncodedImages.cpp)
+        src/WallpaperEngine/Testing/Cases/EncodedImages.cpp
+        src/WallpaperEngine/Testing/Cases/SpectrumPipeline.cpp
+        src/WallpaperEngine/Testing/Cases/SpectrumListeners.cpp)
 endif()
 
 add_library(
