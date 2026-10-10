@@ -385,6 +385,14 @@ bool TextLayout::addFace (std::shared_ptr<const std::vector<uint8_t>> data, cons
     return true;
 }
 
+float TextLayoutResult::verticalAnchor (std::string_view alignment) const {
+    const float extraLines = static_cast<float> (std::max (lines - 1, 0)) * pitch;
+    if (alignment == "top") return ascender;
+    if (alignment == "bottom") return descender - extraLines;
+    // Windows centers between the first ascender and last baseline, excluding descender space.
+    return (ascender - extraLines) * 0.5f;
+}
+
 void TextLayout::applySize (float size) {
     if (size == m_size) {
 	return;

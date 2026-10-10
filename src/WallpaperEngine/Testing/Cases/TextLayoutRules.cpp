@@ -119,3 +119,20 @@ TEST_CASE ("Text layout follows wallpaper64.exe's line rules") {
 	CHECK (msdf.maxX == plain.maxX);
     }
 }
+
+TEST_CASE ("Text anchors follow font baselines rather than the ink or line box") {
+    TextLayoutResult result;
+    result.ascender = 25;
+    result.descender = -5;
+    result.pitch = 30;
+    result.top = 27;
+    result.bottom = -8;
+    result.lines = 1;
+    CHECK (result.verticalAnchor ("top") == 25);
+    CHECK (result.verticalAnchor ("bottom") == -5);
+    CHECK (result.verticalAnchor ("center") == 12.5f);
+    result.lines = 3;
+    CHECK (result.verticalAnchor ("top") == 25);
+    CHECK (result.verticalAnchor ("bottom") == -65);
+    CHECK (result.verticalAnchor ("center") == -17.5f);
+}

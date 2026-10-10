@@ -296,8 +296,7 @@ void CText::uploadQuadVertices () {
     const auto& result = m_layoutResult;
     const float offsetX = m_text.alignment == "left" ? -result.minX
         : m_text.alignment == "right" ? -result.maxX : -(result.minX + result.maxX) * 0.5f;
-    const float offsetY = m_text.verticalalign == "top" ? result.top
-        : m_text.verticalalign == "bottom" ? result.bottom : (result.top + result.bottom) * 0.5f;
+    const float offsetY = result.verticalAnchor (m_text.verticalalign);
     std::vector<float> vertices;
     const auto append = [&] (const std::vector<TextGlyphQuad>& quads) {
         for (const auto& q : quads) {
@@ -435,5 +434,5 @@ void CText::render () {
 glm::vec2 CText::getLayoutOffset () const {
     const auto size = getRasterSize ();
     return {m_text.alignment == "left" ? size.x * .5f : m_text.alignment == "right" ? -size.x * .5f : 0,
-            m_text.verticalalign == "top" ? -size.y * .5f : m_text.verticalalign == "bottom" ? size.y * .5f : 0};
+            (m_layoutResult.top + m_layoutResult.bottom) * .5f - m_layoutResult.verticalAnchor (m_text.verticalalign)};
 }

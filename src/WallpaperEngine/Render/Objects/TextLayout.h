@@ -4,6 +4,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -56,6 +57,8 @@ struct TextLayoutResult {
     float ascender = 0.0f;
     float descender = 0.0f;
     bool valid = false;
+
+    float verticalAnchor (std::string_view alignment) const;
 };
 
 /** A font file WE falls back to, either read into memory (the assets' Twemoji) or a path on disk */
