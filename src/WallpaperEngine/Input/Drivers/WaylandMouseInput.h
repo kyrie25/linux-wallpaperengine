@@ -53,6 +53,7 @@ private:
     const WallpaperEngine::Render::Drivers::WaylandOpenGLDriver& m_waylandDriver;
 
     std::optional<glm::dvec2> m_globalCursorPosition;
+    bool m_forwardedLeftDown = false;
     std::chrono::steady_clock::time_point m_lastHyprlandQuery = {};
 };
 } // namespace WallpaperEngine::Input::Drivers

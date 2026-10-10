@@ -1,8 +1,10 @@
 #include "WaylandMouseInput.h"
+#include "WallpaperEngine/Data/JSON.h"
 #include "WallpaperEngine/Render/Drivers/WaylandOpenGLDriver.h"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <glm/common.hpp>
 #include <regex>
 #include <string>
@@ -19,6 +21,7 @@ WaylandMouseInput::WaylandMouseInput (const WallpaperEngine::Render::Drivers::Wa
 void WaylandMouseInput::update () {
     if (!this->m_waylandDriver.getApp ().getContext ().settings.mouse.enabled) {
 	this->m_globalCursorPosition.reset ();
+	this->m_forwardedLeftDown = false;
 	return;
     }
 
@@ -29,6 +32,21 @@ void WaylandMouseInput::update () {
     this->m_lastHyprlandQuery = now;
 
     this->m_globalCursorPosition = this->queryHyprlandCursorPosition ();
+    this->m_forwardedLeftDown = false;
+    const auto& path = this->m_waylandDriver.getApp ().getContext ().settings.mouse.inputFile;
+    if (!path.empty ()) {
+	try {
+	    // The shell refreshes a held button; expiry releases it if the shell disappears.
+	    if (std::filesystem::file_time_type::clock::now () - std::filesystem::last_write_time (path)
+		< std::chrono::seconds (2)) {
+		std::ifstream input (path);
+		const auto state = WallpaperEngine::Data::JSON::JSON::parse (input);
+		this->m_forwardedLeftDown = state.value ("leftDown", false);
+	    }
+	} catch (const std::exception&) {
+	    // A missing or partially replaced input file represents a released button.
+	}
+    }
 }
 
 glm::dvec2 WaylandMouseInput::position () const {
@@ -59,6 +77,12 @@ glm::dvec2 WaylandMouseInput::position () const {
 }
 
 WallpaperEngine::Input::MouseClickStatus WaylandMouseInput::leftClick () const {
+    if (!this->m_waylandDriver.getApp ().getContext ().settings.mouse.enabled) {
+	return MouseClickStatus::Released;
+    }
+    if (this->m_forwardedLeftDown) {
+	return MouseClickStatus::Clicked;
+    }
     const auto* viewport = this->getActiveOutputViewport ();
     if (viewport) {
 	return viewport->leftClick;

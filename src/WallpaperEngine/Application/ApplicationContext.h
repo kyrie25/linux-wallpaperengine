@@ -178,6 +178,7 @@ public:
 	    bool enabled;
 	    /** If the mouse parallax should be disabled */
 	    bool disableparallax;
+	    std::filesystem::path inputFile;
 	} mouse;
 
 	/**

@@ -253,6 +253,10 @@ void ApplicationContext::loadSettingsFromArgv () {
         .help ("Poll a JSON file for live FPS, volume, scaling and alignment updates")
         .store_into (this->settings.general.controlFile);
 
+    program.add_argument ("--input-file")
+        .help ("Read forwarded desktop left-button state from a JSON file (Wayland)")
+        .store_into (this->settings.mouse.inputFile);
+
     auto& backgroundGroup = program.add_group ("Background options");
     auto& backgroundMode = backgroundGroup.add_mutually_exclusive_group (false);
 
