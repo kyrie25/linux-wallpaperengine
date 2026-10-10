@@ -91,6 +91,9 @@ to a KDE plugin or an embedded Quickshell runtime inside this renderer.
   alignment, padding, sizing, font/layout rules, and effect support within the
   existing glyph pipeline. Flexible text property/default parsing avoids
   rejecting otherwise valid scenes.
+- Vertical text anchors use the first ascender and last baseline/descender,
+  matching the Windows layout instead of centering the whole font box. Cursor
+  hit areas follow the same anchor without changing authored layer positions.
 - Image/text scripts are registered as native QuickJS property scripts, including
   group/image ownership and initialization after scene construction. This
   replaces the earlier limited text-script shim and restores dynamic clock/media
@@ -115,6 +118,9 @@ to a KDE plugin or an embedded Quickshell runtime inside this renderer.
 - Local storage persists script data. Layer APIs support creation, lookup,
   enumeration, ordering, detached initial configuration, deferred parent/child
   destruction, and cleanup after failed construction.
+- Optional Wayland `--input-file` reads per-output left-button state forwarded by
+  desktop shells covering the background surface. Expired or invalid input
+  releases the button; `--disable-mouse` disables both forwarded and native input.
 - Media callback dispatch snapshots recipients. Layers created by a callback
   receive their startup event without recursively extending the same dispatch
   or replaying initialization to old modules.
@@ -188,7 +194,7 @@ to a KDE plugin or an embedded Quickshell runtime inside this renderer.
 
 ## Verification and limits
 
-The published Release implementation passed **1,551 assertions in 99 cases**.
+The published Release implementation passed **1,557 assertions in 100 cases**.
 Run the renderer's tests from a configured `BUILD_TESTING=ON` build using
 `output/tests`. The dotfiles repository contains isolated real Wayland tests for
 two outputs, live controls, native scripts/materials/layers, scene/web audio,

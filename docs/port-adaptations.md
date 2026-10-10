@@ -36,7 +36,7 @@ Configure `BUILD_TESTING=ON` and run the build's `output/tests` executable. The
 suite includes real surfaceless EGL artwork uploads, authoring JSON, native
 texture flags, vectors, effect conditions, text shaping, spectra, puppet layer
 blending, frame pacing, web callback detachment, GIF timing/disposal, and JPEG
-orientation. The evaluated Release build passes 1,551 assertions in 99 cases.
+orientation. The evaluated Release build passes 1,557 assertions in 100 cases.
 
 The dotfiles repository's `tests/wallpaperengine/` contains isolated supervisor
 and real Wayland renderer tests. They require a running Wayland session; the
@@ -106,10 +106,13 @@ The integration checks cover:
   global other-app audio policy, individual mute, startup grace, process-session
   cleanup, crash recovery, and simulated output reconnect.
 
-Intel offload selects Mesa EGL within the existing supervisor offload condition
-and preserves an explicit EGL vendor override. Actual Wayland integration was
-verified with Intel GPU rendering; NVIDIA startup under VRAM pressure also
-failed with the previous staged build and is not established as a new regression.
+The supervisor leaves EGL vendor selection to GLVND or an explicit caller
+override. Compositor captures on the hybrid NVIDIA/Intel setup showed black
+output with forced Mesa for both the pre-port and current renderer; automatic
+selection and explicit NVIDIA displayed correctly with both builds. Earlier
+Intel checks verified internal rendering but did not establish compositor
+presentation. NVIDIA startup under VRAM pressure also failed with the previous
+staged build and is not established as a new renderer regression.
 
 Keep the existing renderer installed while evaluating a new build. A successful
 unit suite does not establish Windows parity for every workshop wallpaper.
