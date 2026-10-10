@@ -216,7 +216,8 @@ std::shared_ptr<const TextureProvider> CPass::resolveTexture0 () {
 	return texture0;
     }
 
-    auto& chain = it->second;
+    // Preserve unavailable textures so they can become ready on a later frame.
+    auto chain = it->second;
 
     do {
 	texture0 = chain->texture;
