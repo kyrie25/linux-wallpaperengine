@@ -31,6 +31,8 @@ struct ObjectData {
     UserSettingUniquePtr groupScale;
     UserSettingUniquePtr groupAngles;
     UserSettingUniquePtr groupVisible;
+    std::string initialConfiguration;
+    bool solid = true, disablePropagation = false;
 };
 
 /**
@@ -72,6 +74,7 @@ struct ImageEffectPassOverride {
  * @see ImageEffectPass
  */
 struct ImageEffect {
+    ComboMap conditionCombos;
     /** Not sure what it's used for */
     int id;
     /** Effect's name for the editor */
@@ -89,10 +92,22 @@ struct ImageEffect {
  */
 struct ImageAnimationLayer {
     int id;
+    /** Editor label only, the clip is picked by "animation" (the clip id in the puppet .mdl) */
+    std::string name;
     UserSettingUniquePtr rate;
     UserSettingUniquePtr visible;
     UserSettingUniquePtr blend;
     UserSettingUniquePtr animation;
+    /** adds its difference from the rest pose instead of blending towards the clip's pose */
+    bool additive = false;
+    /** fade the weight in from the start / out towards the end over blendTime seconds (sub_14026C8B0) */
+    bool blendIn = false;
+    bool blendOut = false;
+    float blendTime = 0.5f;
+    /** insert after the last non-additive layer instead of at the end (sub_1401FCC20) */
+    bool autosort = false;
+    /** insert at this position of the layer list, clamped to the last one */
+    std::optional<int64_t> index = std::nullopt;
 };
 
 struct ImageData {
@@ -615,6 +630,25 @@ struct TextData {
     /** Padding inside the bounding box (x = horizontal, y = vertical) */
     glm::vec2 padding;
     // TODO: PARSE LIMITS TOO!
+    UserSettingUniquePtr spacing;
+    UserSettingUniquePtr limitWidth;
+    UserSettingUniquePtr maxWidth;
+    UserSettingUniquePtr limitRows;
+    UserSettingUniquePtr maxRows;
+    UserSettingUniquePtr limitUseEllipsis;
+    UserSettingUniquePtr blockAlign;
+    UserSettingUniquePtr msdf;
+    UserSettingUniquePtr outline;
+    UserSettingUniquePtr outlineThickness;
+    UserSettingUniquePtr outlineColor;
+    UserSettingUniquePtr blur;
+    UserSettingUniquePtr blurSize;
+    UserSettingUniquePtr dropShadow;
+    UserSettingUniquePtr dropShadowSize;
+    UserSettingUniquePtr dropShadowOpacity;
+    UserSettingUniquePtr dropShadowOffset;
+    UserSettingUniquePtr dropShadowColor;
+
 };
 
 class Text : public Object, public TextData {

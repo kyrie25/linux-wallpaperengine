@@ -12,6 +12,9 @@
 #include "WallpaperEngine/Data/Parsers/ObjectParser.h"
 
 #include <ranges>
+#include <limits>
+#include "SceneCursor.h"
+#include <glm/gtc/matrix_transform.hpp>
 
 extern float g_Time;
 extern float g_TimeLast;
@@ -114,6 +117,12 @@ CScene::CScene (
 	{ sceneWidth / 8, sceneHeight / 8 }
     );
 
+    if (scene->camera.bloom.enabled->value->getBool ()) this->setupBloom ();
+}
+
+void CScene::setupBloom () {
+    const auto sceneWidth = this->getWidth ();
+    const auto sceneHeight = this->getHeight ();
     //
     // Had to get a little creative with the effects to achieve the same bloom effect without any custom code
     // this custom image loads some effect files from the virtual container to achieve the same bloom effect
@@ -157,9 +166,15 @@ CScene::CScene (
 			) } } }
 	      ) } };
 
-    // create image for bloom passes
-    if (scene->camera.bloom.enabled->value->getBool ()) {
-	this->m_bloomObjectData = ObjectParser::parse (bloom, scene->project);
+    this->m_bloomObjectData = ObjectParser::parse (bloom, this->getScene ().project);
+    const auto* image = this->m_bloomObjectData->as<Image> ();
+    for (const auto& effect : image->effects) {
+        for (const auto& pass : effect->passOverrides) {
+            pass->constants.at ("bloomstrength")->value->connect (this->getScene ().camera.bloom.strength->value.get ());
+            pass->constants.at ("bloomthreshold")->value->connect (this->getScene ().camera.bloom.threshold->value.get ());
+        }
+    }
+    {
 	this->m_bloomObject = this->createObject (*this->m_bloomObjectData);
 
 	this->m_objectsByRenderOrder.push_back (this->m_bloomObject);
@@ -167,6 +182,8 @@ CScene::CScene (
 }
 
 CScene::~CScene () {
+    this->m_shuttingDown = true;
+    this->m_scriptEngine->shutdownScripts ();
     // bloom object is in the objects list, so no need to explicitly delete it
     this->m_bloomObject = nullptr;
 
@@ -179,6 +196,7 @@ CScene::~CScene () {
 }
 
 Render::CObject* CScene::createObject (const Object& object) {
+    if (m_removedObjectIds.contains (object.id)) return nullptr;
     Render::CObject* renderObject = nullptr;
 
     // ensure the item is not loaded already
@@ -204,6 +222,7 @@ Render::CObject* CScene::createObject (const Object& object) {
     // check if the item has any parent and also create it first
     if (object.parent.has_value ()) {
 	int parentId = object.parent.value ();
+	if (!this->m_objects.contains (parentId)) {
 
 	const auto dep = std::ranges::find_if (this->getScene ().objects, [&parentId] (const auto& o) {
 	    return o->id == parentId;
@@ -214,6 +233,7 @@ Render::CObject* CScene::createObject (const Object& object) {
 	}
 
 	this->createObject (**dep);
+        }
     }
 
     renderObject = this->dispatchObjectType (object);
@@ -316,7 +336,11 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
     }
 
     // run a tick in the javascript logic
+    for (auto* object : this->m_objectsByRenderOrder)
+        if (object->is<Objects::CImage> ()) object->as<Objects::CImage> ()->prepareScriptFrame ();
     this->getScriptEngine ().tick ();
+    this->flushDestroyedScriptLayers ();
+    if (this->getScene ().camera.bloom.enabled->value->getBool () && !this->m_bloomObject) this->setupBloom ();
 
     // update main textures for images
     for (const auto& cur : this->m_objectsByRenderOrder) {
@@ -346,7 +370,9 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
     // ensure we render over the whole framebuffer
     glViewport (0, 0, this->m_sceneFBO->getRealWidth (), this->m_sceneFBO->getRealHeight ());
 
-    glClear (GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const auto clear = this->getScene ().colors.clear->value->getVec3 ();
+    glClearColor (clear.r, clear.g, clear.b, 1.0f);
+    glClear (GL_DEPTH_BUFFER_BIT | (this->getScene ().clearEnabled->value->getBool () ? GL_COLOR_BUFFER_BIT : 0));
 
     for (const auto& cur : this->m_objectsByRenderOrder) {
 	const auto& debug = this->getContext ().getApp ().getContext ().settings.render.debug;
@@ -357,6 +383,7 @@ void CScene::renderFrame (const glm::ivec4& viewport) {
 	    continue;
 	}
 
+        if (cur == this->m_bloomObject && !this->getScene ().camera.bloom.enabled->value->getBool ()) continue;
 	cur->render ();
     }
 }
@@ -373,6 +400,7 @@ void CScene::updateMouse (const glm::ivec4& viewport) {
     // Normalize Y coordinate (OpenGL convention: 0=bottom, 1=top)
     // Particle code expects this convention: 0=bottom results in negative Y (down), 1=top results in positive Y (up)
     double normalizedMouseY = glm::clamp ((position.y - viewport.y) / viewport.w, 0.0, 1.0);
+    this->m_mouseScreenPosition = cursorScreenPosition (position, viewport);
 
     // Account for UV cropping when using fill/fit scaling modes
     // The scene may be rendered larger than viewport and cropped via UVs
@@ -423,4 +451,151 @@ const std::vector<CObject*>& CScene::getObjectsByRenderOrder () const { return t
 const CObject* CScene::getObject (int id) const {
     const auto object = this->m_objects.find (id);
     return object == this->m_objects.end () ? nullptr : object->second;
+}
+
+std::vector<CObject*> CScene::getScriptLayers () const {
+    std::vector<CObject*> layers;
+    for (auto* object : m_objectsByRenderOrder)
+        if (object != m_bloomObject && !m_pendingLayerDestroy.contains (object->getId ())) layers.push_back (object);
+    return layers;
+}
+
+CObject* CScene::createScriptLayer (const std::string& configuration) {
+    if (m_shuttingDown) throw std::runtime_error ("Cannot create layers during scene shutdown");
+    auto config = Data::JSON::JSON::parse (configuration);
+    if (!config.is_object ()) throw std::invalid_argument ("Layer configuration must be an object");
+    if (config.contains ("size") && config.contains ("color") && !config.contains ("image") && !config.contains ("text")
+        && !config.contains ("sound") && !config.contains ("particle"))
+        config["image"] = "models/util/solidlayer.json";
+    while (m_nextScriptObjectId > 0 && (m_objects.contains (m_nextScriptObjectId)
+        || std::ranges::any_of (getScene ().objects, [this] (const auto& object) { return object->id == m_nextScriptObjectId; }))) {
+        m_nextScriptObjectId = m_nextScriptObjectId == std::numeric_limits<int>::max () ? 0 : m_nextScriptObjectId + 1;
+    }
+    if (!m_nextScriptObjectId) throw std::overflow_error ("Layer IDs exhausted");
+    const int id = m_nextScriptObjectId;
+    m_nextScriptObjectId = id == std::numeric_limits<int>::max () ? 0 : id + 1;
+    config["id"] = id;
+    if (!config.contains ("name")) config["name"] = "Script Layer " + std::to_string (id);
+    auto data = ObjectParser::parse (config, getScene ().project);
+    if (!data || (!data->is<Image> () && !data->is<Text> () && !data->is<Sound> ()))
+        throw std::invalid_argument ("Unsupported layer type");
+    auto parent = data->parent;
+    std::set<int> ancestors;
+    while (parent && ancestors.insert (*parent).second) {
+        if (*parent == id || m_pendingLayerDestroy.contains (*parent))
+            throw std::invalid_argument ("Invalid layer parent");
+        const auto* object = getObject (*parent);
+        if (!object) throw std::invalid_argument ("Layer parent does not exist");
+        parent = object->getObject ().parent;
+    }
+    m_scriptObjectData.emplace (id, std::move (data));
+    CObject* result = nullptr;
+    try { result = createObject (*m_scriptObjectData.at (id)); }
+    catch (...) { m_scriptObjectData.erase (id); throw; }
+    if (!result) {
+        m_scriptObjectData.erase (id);
+        throw std::runtime_error ("Could not initialize layer");
+    }
+    // Bloom remains the final scene pass when scripts append a layer.
+    const auto bloom = std::ranges::find (m_objectsByRenderOrder, m_bloomObject);
+    m_objectsByRenderOrder.insert (bloom, result);
+    return result;
+}
+
+bool CScene::destroyScriptLayer (const CObject* object) {
+    if (m_shuttingDown || !object || getObject (object->getId ()) != object) return false;
+    return m_pendingLayerDestroy.insert (object->getId ()).second;
+}
+
+bool CScene::sortScriptLayer (const CObject* object, int index) {
+    const auto layers = getScriptLayers ();
+    if (index < 0 || size_t (index) >= layers.size () || std::ranges::find (layers, object) == layers.end ()) return false;
+    auto* moved = *std::ranges::find (m_objectsByRenderOrder, object);
+    const auto target = std::ranges::find (m_objectsByRenderOrder, layers[index]);
+    const auto source = std::ranges::find (m_objectsByRenderOrder, object);
+    const auto physical = target - m_objectsByRenderOrder.begin ();
+    m_objectsByRenderOrder.erase (source);
+    m_objectsByRenderOrder.insert (m_objectsByRenderOrder.begin () + physical, moved);
+    return true;
+}
+
+void CScene::flushDestroyedScriptLayers () {
+    while (!m_pendingLayerDestroy.empty ()) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (const auto& [id, object] : m_objects)
+                if (object->getObject ().parent && m_pendingLayerDestroy.contains (*object->getObject ().parent)
+                    && m_pendingLayerDestroy.insert (id).second) changed = true;
+        }
+        const auto ids = m_pendingLayerDestroy;
+        for (int id : ids)
+            if (auto* layer = dynamic_cast<ScriptableObject*> (m_objects.at (id))) m_scriptEngine->destroyObjectModules (*layer);
+        std::erase_if (m_objectsByRenderOrder, [&] (const auto* object) { return ids.contains (object->getId ()); });
+        for (int id : ids) {
+            m_cursorState.forget (id);
+            delete m_objects.at (id);
+            m_objects.erase (id);
+            m_scriptObjectData.erase (id);
+            m_removedObjectIds.insert (id);
+            m_pendingLayerDestroy.erase (id);
+        }
+    }
+}
+
+
+std::optional<glm::vec3> CScene::getMouseWorldPosition () const {
+    return cursorWorldPosition (m_mousePositionNormalized, m_camera->getProjection () * m_camera->getLookAt (),
+                                getWidth (), getHeight ());
+}
+
+void CScene::dispatchCursorEvents () {
+    const auto world = getMouseWorldPosition ();
+    if (!world) return;
+    const bool moved = !m_cursorInputInitialized || m_previousCursorScreenPosition != m_mouseScreenPosition;
+    m_cursorInputInitialized = true;
+    m_previousCursorScreenPosition = m_mouseScreenPosition;
+    m_cursorState.beginFrame (moved, getContext ().getInputContext ().getMouseInput ().leftClick () == Input::Clicked);
+    std::vector<int> candidates;
+    for (const auto* object : m_objectsByRenderOrder) candidates.push_back (object->getId ());
+    for (auto it = candidates.rbegin (); it != candidates.rend (); ++it) {
+        const auto* object = getObject (*it);
+        const auto* layer = object ? dynamic_cast<const ScriptableObject*> (object) : nullptr;
+        if (!layer || !layer->isSolid ()) continue;
+        glm::vec2 size {}, alignment {};
+        if (object->is<Objects::CImage> ()) {
+            const auto* image = object->as<Objects::CImage> ();
+            size = image->getSize ();
+            const auto& anchor = image->getImage ().alignment;
+            if (anchor.find ("left") != std::string::npos) alignment.x = size.x * .5f;
+            else if (anchor.find ("right") != std::string::npos) alignment.x = -size.x * .5f;
+            if (anchor.find ("top") != std::string::npos) alignment.y = -size.y * .5f;
+            else if (anchor.find ("bottom") != std::string::npos) alignment.y = size.y * .5f;
+        } else if (object->is<Objects::CText> ()) {
+            size = object->as<Objects::CText> ()->getRasterSize ();
+            alignment = object->as<Objects::CText> ()->getLayoutOffset ();
+        } else continue;
+        const auto transform = object->resolveTransform (object->getObject ());
+        auto matrix = glm::translate (glm::mat4 (1), transform.origin);
+        matrix = glm::rotate (matrix, transform.angle, glm::vec3 (0,0,1));
+        matrix = glm::scale (matrix, transform.scale);
+        const auto local = cursorLocalPosition (*world, matrix, size, alignment);
+        if (!local) continue;
+        const bool inside = local->x >= 0 && local->x <= size.x && local->y >= 0 && local->y <= size.y;
+        m_cursorState.visit (*it, inside, [&] (const char* event) {
+            m_scriptEngine->dispatchCursorEvent (*layer, event, *world, *local);
+        });
+        if (!m_cursorState.hasButtonCapture () && inside && layer->disablesCursorPropagation ()) {
+            bool visible = true;
+            const CObject* current = object;
+            for (int depth = 0; current && depth < 32; ++depth) {
+                const auto& data = current->getObject ();
+                visible &= data.is<Image> () ? data.as<Image> ()->visible->value->getBool ()
+                    : data.is<Text> () ? data.as<Text> ()->visible->value->getBool () : data.groupVisible->value->getBool ();
+                current = data.parent ? getObject (*data.parent) : nullptr;
+            }
+            if (visible) break;
+        }
+    }
+    m_cursorState.finishFrame ();
 }

@@ -91,6 +91,7 @@ public:
 	    std::filesystem::path assets;
 	    /** Background to load (provided as the final argument) as fallback for multi-screen setups */
 	    std::filesystem::path defaultBackground;
+            std::filesystem::path controlFile;
 	    /** The backgrounds specified for different screens */
 	    std::map<std::string, std::filesystem::path> screenBackgrounds;
 	    /** Properties to change values for */

@@ -4,6 +4,8 @@
 
 #include "WallpaperEngine/Render/CWallpaper.h"
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
+#include <set>
+#include "SceneCursorState.h"
 
 namespace WallpaperEngine::Render {
 class Camera;
@@ -40,10 +42,16 @@ public:
     const glm::vec2* getMousePosition () const;
     const glm::vec2* getMousePositionLast () const;
     const glm::vec2* getMousePositionNormalized () const;
+    std::optional<glm::vec3> getMouseWorldPosition () const;
+    const glm::vec2& getMouseScreenPosition () const { return m_mouseScreenPosition; }
     const glm::vec2* getParallaxDisplacement () const;
 
     [[nodiscard]] const std::vector<CObject*>& getObjectsByRenderOrder () const;
     [[nodiscard]] const CObject* getObject (int id) const;
+    std::vector<CObject*> getScriptLayers () const;
+    CObject* createScriptLayer (const std::string& configuration);
+    bool destroyScriptLayer (const CObject* object);
+    bool sortScriptLayer (const CObject* object, int index);
 
 protected:
     void renderFrame (const glm::ivec4& viewport) override;
@@ -52,6 +60,10 @@ protected:
     friend class CWallpaper;
 
 private:
+    friend class WallpaperEngine::Scripting::ScriptEngine;
+    void dispatchCursorEvents ();
+    void setupBloom ();
+    void flushDestroyedScriptLayers ();
     Render::CObject* createObject (const Object& object);
     Render::CObject* dispatchObjectType (const Object& object);
     void addObjectToRenderOrder (const Object& object);
@@ -62,10 +74,19 @@ private:
     CObject* m_bloomObject = nullptr;
     std::map<int, CObject*> m_objects = {};
     std::vector<CObject*> m_objectsByRenderOrder = {};
+    std::map<int, ObjectUniquePtr> m_scriptObjectData;
+    std::set<int> m_pendingLayerDestroy;
+    std::set<int> m_removedObjectIds;
+    int m_nextScriptObjectId = 1;
+    bool m_shuttingDown = false;
+    SceneCursorState m_cursorState;
+    glm::vec2 m_previousCursorScreenPosition {};
+    bool m_cursorInputInitialized = false;
     std::vector<DynamicValue*> m_scriptedValues = {};
     glm::vec2 m_mousePosition = {};
     glm::vec2 m_mousePositionLast = {};
     glm::vec2 m_mousePositionNormalized = {};
+    glm::vec2 m_mouseScreenPosition = {};
     glm::vec2 m_parallaxDisplacement = {};
     std::shared_ptr<const CFBO> _rt_4FrameBuffer = nullptr;
     std::shared_ptr<const CFBO> _rt_8FrameBuffer = nullptr;

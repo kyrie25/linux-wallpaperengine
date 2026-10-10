@@ -135,6 +135,7 @@ private:
 
     // Are Vs coordinates fliped
     bool m_vflip = false;
+    bool m_dirty = true;
 
     // Texture scaling mode
     TextureUVsScaling m_textureUVsMode = TextureUVsScaling::DefaultUVs;

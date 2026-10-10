@@ -1,5 +1,6 @@
 #pragma once
 
+#include "TextLayout.h"
 #include <string>
 #include <vector>
 
@@ -11,12 +12,6 @@
 #include "WallpaperEngine/Scripting/ScriptEngine.h"
 #include "WallpaperEngine/Scripting/ScriptableObject.h"
 
-// Forward-declare FreeType types to avoid leaking the header into users.
-struct FT_LibraryRec_;
-struct FT_FaceRec_;
-typedef struct FT_LibraryRec_* FT_Library;
-typedef struct FT_FaceRec_* FT_Face;
-
 namespace WallpaperEngine::Render::Wallpapers {
 class CScene;
 }
@@ -27,8 +22,7 @@ using namespace WallpaperEngine::Data::Model;
 /**
  * Text renderer.
  *
- * Renders static and scripted text as a FreeType-rasterized texture drawn on
- * a textured quad. Text effects and multiline layout are not implemented.
+ * Renders shaped static and scripted text from coverage and MSDF glyph atlases.
  */
 class CText final : virtual public CObject, public Scripting::ScriptableObject {
 public:
@@ -37,6 +31,8 @@ public:
 
     void setup () override;
     void render () override;
+    glm::vec2 getRasterSize () const { return {m_layoutResult.maxX - m_layoutResult.minX, m_layoutResult.top - m_layoutResult.bottom}; }
+    glm::vec2 getLayoutOffset () const;
 
 private:
     // Rebuilds the glyph texture (and matching quad VBO) from the given string.
@@ -45,26 +41,20 @@ private:
     void rebuildTextureFrom (const std::string& text);
     void buildShader ();
     void uploadQuadVertices ();
+    TextLayoutParams layoutParams () const;
 
     // setup() helpers (kept small to keep the setup flow linear).
-    bool initFreeType ();
     bool loadEmbeddedFont ();
     bool loadSystemFont ();
-    bool loadFallbackFont ();
-    FT_Face glyphFace (uint32_t codepoint) const;
-    float maxTextureWidth () const;
-    unsigned int computeEffectivePixelSize () const;
-    void initScriptLayer ();
 
+    TextLayout m_layout;
+    TextLayoutResult m_layoutResult;
+    TextLayoutParams m_layoutParams;
+    GLsizei m_glyphVertices = 0, m_colorVertices = 0;
+    GLuint m_colorTexture = 0, m_colorPixelsTexture = 0;
     const Text& m_text;
     std::string m_lastRenderedText;
-    unsigned int m_lastPixelSize = 0;
-    Scripting::ScriptLayerHandle m_layerHandle = Scripting::kInvalidLayerHandle;
 
-    FT_Library m_ftLibrary = nullptr;
-    FT_Face m_ftFace = nullptr;
-    FT_Face m_fallbackFace = nullptr;
-    std::vector<uint8_t> m_fontData;
 
     GLuint m_texture = 0;
     GLuint m_program = 0;
@@ -75,8 +65,6 @@ private:
     GLint m_uColor = -1;
     GLint m_uTexture = -1;
 
-    glm::ivec2 m_textureSize = { 0, 0 };
-    glm::vec2 m_quadSize = { 0.0f, 0.0f };
 
     bool m_valid = false;
 };

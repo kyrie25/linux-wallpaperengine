@@ -1,4 +1,5 @@
 #include "CText.h"
+#include "WallpaperEngine/Render/ScopedPixelUnpack.h"
 
 #include <cmath>
 #include <cstdint>
@@ -6,8 +7,7 @@
 #include <string_view>
 #include <vector>
 
-#include <ft2build.h>
-#include FT_FREETYPE_H
+#include <iterator>
 
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -24,12 +24,7 @@
 using namespace WallpaperEngine::Render::Objects;
 
 namespace {
-constexpr float kPointSizeScale = 4.0f;
 
-// TODO: Phase 2 – load font from wallpaper's materials/fonts/ using AssetLocator
-// Phase 1 uses a system font instead of the font shipped by the wallpaper.
-// Wallpaper Engine bundles .ttf files in `materials/fonts/`; wiring those in
-// is deferred to Phase 2 along with dynamic/scripted text.
 const std::vector<std::string> kFontCandidates = {
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/TTF/DejaVuSans.ttf",
@@ -41,62 +36,6 @@ const std::vector<std::string> kFallbackFontCandidates = {
     "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
     "/usr/local/share/fonts/WindowsFonts/msgothic.ttc",
 };
-
-std::vector<uint32_t> decodeUtf8 (std::string_view input) {
-    std::vector<uint32_t> result;
-    result.reserve (input.size ());
-
-    for (size_t index = 0; index < input.size ();) {
-	const auto first = static_cast<uint8_t> (input[index]);
-	if (first < 0x80) {
-	    result.push_back (first);
-	    index++;
-	    continue;
-	}
-
-	size_t length = 0;
-	uint32_t codepoint = 0;
-	if ((first & 0xE0) == 0xC0) {
-	    length = 2;
-	    codepoint = first & 0x1F;
-	} else if ((first & 0xF0) == 0xE0) {
-	    length = 3;
-	    codepoint = first & 0x0F;
-	} else if ((first & 0xF8) == 0xF0) {
-	    length = 4;
-	    codepoint = first & 0x07;
-	}
-
-	if (length == 0 || index + length > input.size ()) {
-	    result.push_back (0xFFFD);
-	    index++;
-	    continue;
-	}
-
-	bool valid = true;
-	for (size_t offset = 1; offset < length; offset++) {
-	    const auto continuation = static_cast<uint8_t> (input[index + offset]);
-	    if ((continuation & 0xC0) != 0x80) {
-		valid = false;
-		break;
-	    }
-	    codepoint = (codepoint << 6) | (continuation & 0x3F);
-	}
-
-	const bool overlong = (length == 2 && codepoint < 0x80) || (length == 3 && codepoint < 0x800)
-	    || (length == 4 && codepoint < 0x10000);
-	if (!valid || overlong || codepoint > 0x10FFFF || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
-	    result.push_back (0xFFFD);
-	    index++;
-	    continue;
-	}
-
-	result.push_back (codepoint);
-	index += length;
-    }
-
-    return result;
-}
 
 const char* kVertexShader = R"glsl(
 #version 330 core
@@ -113,12 +52,42 @@ void main() {
 const char* kFragmentShader = R"glsl(
 #version 330 core
 in vec2 vUV;
-uniform sampler2D uTexture;
+uniform sampler2D uTexture, uColorTexture;
 uniform vec4 uColor;
+uniform bool uColorGlyph, uMsdf;
+uniform float uOutline, uBlur, uShadowSize, uShadowOpacity;
+uniform vec3 uOutlineColor, uShadowColor;
+uniform vec2 uShadowOffset;
 out vec4 FragColor;
+float distanceAt(vec2 uv) {
+    vec3 sampleValue = texture(uTexture, uv).rgb;
+    return max(min(sampleValue.r, sampleValue.g), min(max(sampleValue.r, sampleValue.g), sampleValue.b)) - 0.5;
+}
 void main() {
-    float coverage = texture(uTexture, vUV).r;
-    FragColor = vec4(uColor.rgb, uColor.a * coverage);
+    if (uColorGlyph) {
+        vec4 value = texture(uColorTexture, vUV);
+        if (uMsdf) {
+            float range = max(0.5 * dot(vec2(24.0) / vec2(textureSize(uTexture, 0)), 1.0 / fwidth(vUV)), 1.0);
+            value.a *= clamp(range * (texture(uTexture, vUV).a - 0.5) + 0.5, 0.0, 1.0);
+        }
+        FragColor = vec4(value.rgb, value.a * uColor.a);
+        return;
+    }
+    if (!uMsdf) {
+        FragColor = vec4(uColor.rgb, uColor.a * texture(uTexture, vUV).r);
+        return;
+    }
+    float range = max(0.5 * dot(vec2(24.0) / vec2(textureSize(uTexture, 0)), 1.0 / fwidth(vUV)), 1.0);
+    float distance = range * distanceAt(vUV);
+    float blur = max(1.0, uBlur);
+    float coverage = clamp(distance / blur + 0.5, 0.0, 1.0);
+    float outline = clamp((distance + max(uOutline, 0.0)) / blur + 0.5, 0.0, 1.0);
+    float shadow = clamp(range * distanceAt(vUV - uShadowOffset) / max(1.0, uShadowSize) + 0.5, 0.0, 1.0) * uShadowOpacity;
+    vec3 premultiplied = mix(uOutlineColor * outline, uColor.rgb, coverage);
+    float alpha = max(coverage, outline);
+    premultiplied += uShadowColor * shadow * (1.0 - alpha);
+    alpha += shadow * (1.0 - alpha);
+    FragColor = vec4(alpha > 0.0 ? premultiplied / alpha : vec3(0.0), alpha * uColor.a);
 }
 )glsl";
 
@@ -143,20 +112,33 @@ GLuint compileShader (GLenum type, const char* source) {
 CText::CText (Wallpapers::CScene& scene, const Text& text) :
     CObject (scene, text), ScriptableObject (scene, text), m_text (text) {
     this->registerProperty ("color", *text.color->value);
-    this->registerProperty ("alpha", *text.alpha->value);
+    this->registerProperty ("alpha", *text.alpha->value, DynamicValue::Float);
     this->registerProperty ("origin", *text.origin->value);
     this->registerProperty ("scale", *text.scale->value);
     this->registerProperty ("visible", *text.visible->value);
-    this->registerProperty ("pointSize", *text.pointSize->value);
+    this->registerProperty ("pointSize", *text.pointSize->value, DynamicValue::Float);
     this->registerProperty ("text", *text.text->value);
-    this->registerProperty ("pointSize", *text.pointSize->value);
+    this->registerProperty ("spacing", *text.spacing->value, DynamicValue::Float);
+    this->registerProperty ("limitWidth", *text.limitWidth->value);
+    this->registerProperty ("maxWidth", *text.maxWidth->value, DynamicValue::Float);
+    this->registerProperty ("limitRows", *text.limitRows->value);
+    this->registerProperty ("maxRows", *text.maxRows->value);
+    this->registerProperty ("limitUseEllipsis", *text.limitUseEllipsis->value);
+    this->registerProperty ("blockAlign", *text.blockAlign->value);
+    this->registerProperty ("msdf", *text.msdf->value);
+    this->registerProperty ("outline", *text.outline->value);
+    this->registerProperty ("outlineThickness", *text.outlineThickness->value, DynamicValue::Float);
+    this->registerProperty ("outlineColor", *text.outlineColor->value);
+    this->registerProperty ("blur", *text.blur->value);
+    this->registerProperty ("blurSize", *text.blurSize->value, DynamicValue::Float);
+    this->registerProperty ("dropShadow", *text.dropShadow->value);
+    this->registerProperty ("dropShadowSize", *text.dropShadowSize->value, DynamicValue::Float);
+    this->registerProperty ("dropShadowOpacity", *text.dropShadowOpacity->value, DynamicValue::Float);
+    this->registerProperty ("dropShadowOffset", *text.dropShadowOffset->value);
+    this->registerProperty ("dropShadowColor", *text.dropShadowColor->value);
 }
 
 CText::~CText () {
-    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
-	this->getScene ().getScriptEngine ().destroyLayer (m_layerHandle);
-	m_layerHandle = Scripting::kInvalidLayerHandle;
-    }
     if (m_vbo != 0) {
 	glDeleteBuffers (1, &m_vbo);
     }
@@ -166,18 +148,12 @@ CText::~CText () {
     if (m_program != 0) {
 	glDeleteProgram (m_program);
     }
+    if (m_colorPixelsTexture) glDeleteTextures (1, &m_colorPixelsTexture);
+    if (m_colorTexture) glDeleteTextures (1, &m_colorTexture);
     if (m_texture != 0) {
 	glDeleteTextures (1, &m_texture);
     }
-    if (m_ftFace != nullptr) {
-	FT_Done_Face (m_ftFace);
-    }
-    if (m_fallbackFace != nullptr) {
-	FT_Done_Face (m_fallbackFace);
-    }
-    if (m_ftLibrary != nullptr) {
-	FT_Done_FreeType (m_ftLibrary);
-    }
+
 }
 
 void CText::setup () {
@@ -189,260 +165,94 @@ void CText::setup () {
 	return;
     }
 
-    if (!initFreeType ()) {
-	return;
-    }
-
     if (!loadEmbeddedFont () && !loadSystemFont ()) {
 	return;
     }
-    loadFallbackFont ();
-
-    m_lastPixelSize = computeEffectivePixelSize ();
-    FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
-    if (m_fallbackFace != nullptr) {
-	FT_Set_Pixel_Sizes (m_fallbackFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
+    std::vector<TextFontSource> fallbacks;
+    for (const auto& candidate : kFallbackFontCandidates) {
+        if (std::filesystem::exists (candidate)) fallbacks.push_back ({nullptr, candidate});
     }
+    m_layout.setFallbackFonts (std::move (fallbacks));
 
     buildShader ();
     // Scripted text may have an empty placeholder; use a single space so the
     // glyph texture has non-zero dimensions until the script produces a value.
     rebuildTextureFrom (text.empty () ? std::string (" ") : text);
 
-    if (scripted) {
-	initScriptLayer ();
-    }
-
     m_valid = m_texture != 0 && m_program != 0 && m_vao != 0;
 }
 
-bool CText::initFreeType () {
-    if (FT_Init_FreeType (&m_ftLibrary) == 0) {
-	return true;
-    }
-    sLog.error ("CText: FT_Init_FreeType failed for object ", m_text.name);
-    return false;
-}
-
 bool CText::loadEmbeddedFont () {
-    // Wallpapers packed in .pkg don't expose physical paths, so we read the font
-    // into memory and use FT_New_Memory_Face. m_fontData must outlive the face.
-    // `systemfont_*` references signal "use a system font"; let the fallback handle them.
-    if (m_text.font.empty () || m_text.font.rfind ("systemfont_", 0) == 0) {
-	return false;
-    }
-
+    if (m_text.font.empty () || m_text.font.starts_with ("systemfont_")) return false;
     try {
-	auto stream = getAssetLocator ().read (m_text.font);
-	stream->seekg (0, std::ios::end);
-	const auto size = stream->tellg ();
-	stream->seekg (0, std::ios::beg);
-	m_fontData.resize (static_cast<size_t> (size));
-	stream->read (reinterpret_cast<char*> (m_fontData.data ()), size);
-
-	if (FT_New_Memory_Face (
-		m_ftLibrary, m_fontData.data (), static_cast<FT_Long> (m_fontData.size ()), 0, &m_ftFace
-	    )
-	    == 0) {
-	    return true;
-	}
-
-	sLog.error ("CText: FT_New_Memory_Face failed for '", m_text.font, "', falling back to system font");
-    } catch (const std::exception& e) {
-	sLog.error ("CText: cannot read font '", m_text.font, "': ", e.what (), ", falling back to system font");
+        auto stream = getAssetLocator ().read (m_text.font);
+        std::vector<uint8_t> bytes {std::istreambuf_iterator<char> (*stream), {}};
+        if (m_layout.setPrimaryFont (std::move (bytes), m_text.font)) return true;
+    } catch (const std::exception& error) {
+        sLog.error ("CText: cannot read font '", m_text.font, "': ", error.what ());
     }
-
-    m_fontData.clear ();
     return false;
 }
 
 bool CText::loadSystemFont () {
-    std::string fontPath;
     for (const auto& candidate : kFontCandidates) {
-	if (std::filesystem::exists (candidate)) {
-	    fontPath = candidate;
-	    break;
-	}
+        if (std::filesystem::exists (candidate) && m_layout.setPrimaryFont ({}, candidate)) return true;
     }
-    if (fontPath.empty ()) {
-	sLog.error ("CText: no usable system font found");
-	return false;
-    }
-    if (FT_New_Face (m_ftLibrary, fontPath.c_str (), 0, &m_ftFace) != 0) {
-	sLog.error ("CText: FT_New_Face failed for ", fontPath);
-	return false;
-    }
-    return true;
-}
-
-bool CText::loadFallbackFont () {
-    for (const auto& candidate : kFallbackFontCandidates) {
-	if (std::filesystem::exists (candidate) && FT_New_Face (m_ftLibrary, candidate.c_str (), 0, &m_fallbackFace) == 0) {
-	    return true;
-	}
-    }
+    sLog.error ("CText: no usable system font found");
     return false;
 }
 
-FT_Face CText::glyphFace (uint32_t codepoint) const {
-    if (FT_Get_Char_Index (m_ftFace, codepoint) != 0 || m_fallbackFace == nullptr) {
-	return m_ftFace;
-    }
-    return m_fallbackFace;
-}
-
-float CText::maxTextureWidth () const {
-    if (!m_text.parent.has_value ()) {
-	return 0.0f;
-    }
-
-    const auto* parent = dynamic_cast<const CImage*> (this->getScene ().getObject (*m_text.parent));
-    if (parent == nullptr) {
-	return 0.0f;
-    }
-
-    const float authoredParentWidth = parent->getImage ().size.x;
-    const float parentLocalWidth = authoredParentWidth > 0.0f ? authoredParentWidth : parent->getSize ().x;
-    if (parentLocalWidth < m_text.size.x) {
-	return 0.0f;
-    }
-
-    const auto textTransform = this->resolveTransform (m_text);
-    const auto parentTransform = this->resolveTransform (parent->getImage ());
-    if (std::abs (textTransform.angle - parentTransform.angle) > 0.0001f || textTransform.scale.x == 0.0f) {
-	return 0.0f;
-    }
-
-    const float parentWidth = parentLocalWidth * std::abs (parentTransform.scale.x);
-    float parentLeft = parentTransform.origin.x - parentWidth * 0.5f;
-    float parentRight = parentTransform.origin.x + parentWidth * 0.5f;
-    if (parent->getImage ().alignment.find ("left") != std::string::npos) {
-	parentLeft = parentTransform.origin.x;
-	parentRight = parentLeft + parentWidth;
-    } else if (parent->getImage ().alignment.find ("right") != std::string::npos) {
-	parentRight = parentTransform.origin.x;
-	parentLeft = parentRight - parentWidth;
-    }
-
-    const float textScale = std::abs (textTransform.scale.x);
-    const float horizontalPadding = m_text.padding.x * textScale;
-    if (m_text.alignment == "left") {
-	const float textLeft = textTransform.origin.x;
-	return std::max (0.0f, (parentRight - horizontalPadding - textLeft) / textScale);
-    }
-    if (m_text.alignment == "right") {
-	const float textRight = textTransform.origin.x;
-	return std::max (0.0f, (textRight - parentLeft - horizontalPadding) / textScale);
-    }
-
-    const float leftSpace = textTransform.origin.x - parentLeft - horizontalPadding;
-    const float rightSpace = parentRight - textTransform.origin.x - horizontalPadding;
-    return std::max (0.0f, 2.0f * std::min (leftSpace, rightSpace) / textScale);
-}
-
-unsigned int CText::computeEffectivePixelSize () const {
-    // WE text objects often come with scale ~0.09 that, combined with a modest
-    // pointsize, would rasterize glyphs to ~2px on screen (invisible). Rasterize
-    // at higher resolution so that after the model scale is applied in render()
-    // the on-screen size matches the intended pointsize.
-    const glm::vec3 initialScale = this->resolveTransform (m_text).scale;
-    const float avgScale = (initialScale.x + initialScale.y) * 0.5f;
-    const float compensate = (avgScale > 0.0f && avgScale < 1.0f) ? std::min (1.0f / avgScale, 32.0f) : 1.0f;
-    return std::max<unsigned int> (
-	1u, static_cast<unsigned int> (m_text.pointSize->value->getFloat () * kPointSizeScale * compensate)
-    );
-}
-
-void CText::initScriptLayer () {
-    const auto& script = m_text.text->value->getScriptSource ();
-
-    if (!script.has_value ()) {
-	return;
-    }
-
-    m_layerHandle = this->getScene ().getScriptEngine ().createLayerScript (
-	*script, m_text.text->value->getProperties (), m_text.text->value->getString ()
-    );
-
-    if (m_layerHandle == Scripting::kInvalidLayerHandle) {
-	sLog.error ("CText: createLayerScript failed for '", m_text.name, "'");
-    }
+TextLayoutParams CText::layoutParams () const {
+    return {
+        .size = m_text.pointSize->value->getFloat (),
+        .spacing = m_text.spacing->value->getVec2 (),
+        .msdf = m_text.msdf->value->getBool () || m_text.outline->value->getBool ()
+            || m_text.blur->value->getBool () || m_text.dropShadow->value->getBool (),
+        .align = m_text.alignment == "left" ? TextAlign::Left
+            : m_text.alignment == "right" ? TextAlign::Right : TextAlign::Center,
+        .maxWidth = m_text.limitWidth->value->getBool () ? m_text.maxWidth->value->getFloat () : 0.0f,
+        .maxRows = m_text.limitRows->value->getBool () ? m_text.maxRows->value->getInt () : 0,
+        .ellipsis = m_text.limitUseEllipsis->value->getBool (),
+        .blockAlign = m_text.blockAlign->value->getBool (),
+    };
 }
 
 void CText::rebuildTextureFrom (const std::string& text) {
-    // Two-pass rasterization: first measure the bounding box, then rasterize
-    // every glyph into a single grayscale bitmap. Phase 1 renders one line —
-    // multi-line wrapping, alignment, and padding come with Phase 2.
-    //
-    // Safe to call repeatedly: GL handles (texture, VAO, VBO) are reused when
-    // already allocated, so dynamic/scripted text can regenerate the glyph
-    // bitmap every time the rendered string changes without leaking.
-    const auto codepoints = decodeUtf8 (text);
-
-    int penX = 0;
-    int maxAscent = 0;
-    int maxDescent = 0;
-
-    for (uint32_t codepoint : codepoints) {
-	FT_Face face = glyphFace (codepoint);
-	if (FT_Load_Char (face, codepoint, FT_LOAD_RENDER) != 0) {
-	    continue;
-	}
-	FT_GlyphSlot slot = face->glyph;
-	penX += slot->advance.x >> 6;
-	maxAscent = std::max (maxAscent, slot->bitmap_top);
-	maxDescent = std::max (maxDescent, static_cast<int> (slot->bitmap.rows) - slot->bitmap_top);
-    }
-
-    const float widthLimit = maxTextureWidth ();
-    const int width = std::max (1, widthLimit > 0.0f ? std::min (penX, static_cast<int> (widthLimit)) : penX);
-    const int height = std::max (1, maxAscent + maxDescent);
-    std::vector<uint8_t> pixels (static_cast<size_t> (width) * height, 0);
-
-    penX = 0;
-    for (uint32_t codepoint : codepoints) {
-	FT_Face face = glyphFace (codepoint);
-	if (FT_Load_Char (face, codepoint, FT_LOAD_RENDER) != 0) {
-	    continue;
-	}
-
-	FT_GlyphSlot slot = face->glyph;
-	const auto& bmp = slot->bitmap;
-	const int originX = penX + slot->bitmap_left;
-	const int originY = maxAscent - slot->bitmap_top;
-
-	for (unsigned int row = 0; row < bmp.rows; ++row) {
-	    for (unsigned int col = 0; col < bmp.width; ++col) {
-		const int dstX = originX + static_cast<int> (col);
-		const int dstY = originY + static_cast<int> (row);
-		if (dstX < 0 || dstX >= width || dstY < 0 || dstY >= height) {
-		    continue;
-		}
-		pixels[static_cast<size_t> (dstY) * width + dstX] = bmp.buffer[row * bmp.pitch + col];
-	    }
-	}
-
-	penX += slot->advance.x >> 6;
-    }
-
-    const bool firstUpload = (m_texture == 0);
-    if (firstUpload) {
-	glGenTextures (1, &m_texture);
-    }
+    m_layoutParams = layoutParams ();
+    m_layoutResult = m_layout.layout (text, m_layoutParams);
+    TightPixelTransfer transfer;
+    if (!m_texture) glGenTextures (1, &m_texture);
     glBindTexture (GL_TEXTURE_2D, m_texture);
-    glPixelStorei (GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D (GL_TEXTURE_2D, 0, GL_RED, width, height, 0, GL_RED, GL_UNSIGNED_BYTE, pixels.data ());
-    if (firstUpload) {
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    const int channels = m_layout.getAtlasChannels ();
+    glTexImage2D (GL_TEXTURE_2D, 0, channels == 4 ? GL_RGBA8 : GL_R8, m_layout.getAtlasSize (),
+                 m_layout.getAtlasSize (), 0, channels == 4 ? GL_RGBA : GL_RED, GL_UNSIGNED_BYTE,
+                 m_layout.getAtlasPixels ().data ());
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    if (!m_layoutResult.colorQuads.empty ()) {
+        if (!m_colorTexture) glGenTextures (1, &m_colorTexture);
+        glBindTexture (GL_TEXTURE_2D, m_colorTexture);
+        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, m_layout.getColorAtlasSize (), m_layout.getColorAtlasSize (),
+                     0, GL_RGBA, GL_UNSIGNED_BYTE, m_layout.getColorAtlasPixels ().data ());
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        if (m_layout.getColorScale () > 0) {
+            if (!m_colorPixelsTexture) glGenTextures (1, &m_colorPixelsTexture);
+            glBindTexture (GL_TEXTURE_2D, m_colorPixelsTexture);
+            const int size = m_layout.getColorAtlasSize () * m_layout.getColorScale ();
+            glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                          m_layout.getColorTexturePixels ().data ());
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri (GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        }
     }
-
-    m_textureSize = { width, height };
-    m_quadSize = { static_cast<float> (width), static_cast<float> (height) };
     m_lastRenderedText = text;
-
     uploadQuadVertices ();
 }
 
@@ -483,40 +293,36 @@ void CText::buildShader () {
 }
 
 void CText::uploadQuadVertices () {
-    // The authored origin already includes horizontal padding. Anchor the
-    // tightly packed glyph texture directly to that origin.
-    float left = m_quadSize.x * -0.5f;
-    if (m_text.alignment == "left") {
-	left = 0.0f;
-    } else if (m_text.alignment == "right") {
-	left = -m_quadSize.x;
-    }
-    const float right = left + m_quadSize.x;
-    const float top = m_text.verticalalign == "center" ? m_quadSize.y * -0.5f : 0.0f;
-    const float bottom = top + m_quadSize.y;
-    // With vflip=true (Wayland/GLFW), GL y- = screen top. So the quad bottom (y=0,
-    // lower GL y) appears at screen top. UV.v=0 here = FT glyph top → shows at screen top ✓
-    const float verts[] = {
-	// pos        // uv
-	left, top, 0.0f, 0.0f, right, top, 1.0f, 0.0f, right, bottom, 1.0f, 1.0f,
-	left, top, 0.0f, 0.0f, right, bottom, 1.0f, 1.0f, left, bottom, 0.0f, 1.0f,
+    const auto& result = m_layoutResult;
+    const float offsetX = m_text.alignment == "left" ? -result.minX
+        : m_text.alignment == "right" ? -result.maxX : -(result.minX + result.maxX) * 0.5f;
+    const float offsetY = m_text.verticalalign == "top" ? result.top
+        : m_text.verticalalign == "bottom" ? result.bottom : (result.top + result.bottom) * 0.5f;
+    std::vector<float> vertices;
+    const auto append = [&] (const std::vector<TextGlyphQuad>& quads) {
+        for (const auto& q : quads) {
+            const float left = q.rect.x + offsetX, right = q.rect.z + offsetX;
+            const float top = -q.rect.w + offsetY, bottom = -q.rect.y + offsetY;
+            const float quad[] = {
+                left, top, q.uv.x, q.uv.y, right, top, q.uv.z, q.uv.y, right, bottom, q.uv.z, q.uv.w,
+                left, top, q.uv.x, q.uv.y, right, bottom, q.uv.z, q.uv.w, left, bottom, q.uv.x, q.uv.w};
+            vertices.insert (vertices.end (), std::begin (quad), std::end (quad));
+        }
     };
-
-    const bool firstUpload = (m_vao == 0);
-    if (firstUpload) {
-	glGenVertexArrays (1, &m_vao);
-	glGenBuffers (1, &m_vbo);
-    }
+    append (result.quads);
+    m_glyphVertices = static_cast<GLsizei> (vertices.size () / 4);
+    append (result.colorQuads);
+    m_colorVertices = static_cast<GLsizei> (vertices.size () / 4) - m_glyphVertices;
+    const bool firstUpload = m_vao == 0;
+    if (firstUpload) { glGenVertexArrays (1, &m_vao); glGenBuffers (1, &m_vbo); }
     glBindVertexArray (m_vao);
     glBindBuffer (GL_ARRAY_BUFFER, m_vbo);
-    glBufferData (GL_ARRAY_BUFFER, sizeof (verts), verts, GL_DYNAMIC_DRAW);
+    glBufferData (GL_ARRAY_BUFFER, vertices.size () * sizeof (float), vertices.data (), GL_DYNAMIC_DRAW);
     if (firstUpload) {
-	glEnableVertexAttribArray (0);
-	glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), reinterpret_cast<void*> (0));
-	glEnableVertexAttribArray (1);
-	glVertexAttribPointer (
-	    1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), reinterpret_cast<void*> (2 * sizeof (float))
-	);
+        glEnableVertexAttribArray (0);
+        glVertexAttribPointer (0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), nullptr);
+        glEnableVertexAttribArray (1);
+        glVertexAttribPointer (1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof (float), reinterpret_cast<void*> (2 * sizeof (float)));
     }
     glBindVertexArray (0);
 }
@@ -533,28 +339,11 @@ void CText::render () {
     std::string str = "Text " + this->getObject ().name + " (" + std::to_string (this->getObject ().id) + ")";
     glPushDebugGroup (GL_DEBUG_SOURCE_APPLICATION, 0, -1, str.c_str ());
 #endif /* DEBUG */
-    std::string renderedText = m_lastRenderedText;
-    if (m_layerHandle != Scripting::kInvalidLayerHandle) {
-	auto& se = this->getScene ().getScriptEngine ();
-	se.tickLayer (
-	    m_layerHandle, static_cast<double> (getScene ().getTime ()),
-	    static_cast<double> (getScene ().getDeltaTime ()), static_cast<double> (getScene ().getFps ())
-	);
-	const std::string current = se.layerText (m_layerHandle);
-	renderedText = current.empty () ? std::string (" ") : current;
-    }
+    std::string renderedText = m_text.text->value->getString ();
+    if (renderedText.empty ()) renderedText = " ";
 
-    const unsigned int pixelSize = computeEffectivePixelSize ();
-    if (pixelSize != m_lastPixelSize) {
-	m_lastPixelSize = pixelSize;
-	FT_Set_Pixel_Sizes (m_ftFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
-	if (m_fallbackFace != nullptr) {
-	    FT_Set_Pixel_Sizes (m_fallbackFace, 0, static_cast<FT_UInt> (m_lastPixelSize));
-	}
-	rebuildTextureFrom (renderedText);
-    } else if (renderedText != m_lastRenderedText) {
-	rebuildTextureFrom (renderedText);
-    }
+    if (renderedText != m_lastRenderedText || layoutParams () != m_layoutParams)
+        rebuildTextureFrom (renderedText);
 
     const glm::vec4 color = m_text.color->value->getVec4 ();
     const float alpha = m_text.alpha->value->getFloat ();
@@ -596,6 +385,10 @@ void CText::render () {
 
     glEnable (GL_BLEND);
     glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // Text draws directly into the scene, whose alpha must remain opaque.
+    GLboolean previousMask[4];
+    glGetBooleanv (GL_COLOR_WRITEMASK, previousMask);
+    glColorMask (previousMask[0], previousMask[1], previousMask[2], GL_FALSE);
 
     glUseProgram (m_program);
     glUniformMatrix4fv (m_uMVP, 1, GL_FALSE, glm::value_ptr (mvp));
@@ -606,9 +399,41 @@ void CText::render () {
     glUniform1i (m_uTexture, 0);
 
     glBindVertexArray (m_vao);
-    glDrawArrays (GL_TRIANGLES, 0, 6);
+    glUniform1i (glGetUniformLocation (m_program, "uColorGlyph"), 0);
+    glUniform1i (glGetUniformLocation (m_program, "uMsdf"), m_layoutParams.msdf);
+    glUniform1f (glGetUniformLocation (m_program, "uOutline"), m_text.outline->value->getBool ()
+        ? m_text.outlineThickness->value->getFloat () : 0.0f);
+    const auto outline = m_text.outlineColor->value->getVec3 ();
+    glUniform3fv (glGetUniformLocation (m_program, "uOutlineColor"), 1, glm::value_ptr (outline));
+    glUniform1f (glGetUniformLocation (m_program, "uBlur"), m_text.blur->value->getBool ()
+        ? m_text.blurSize->value->getFloat () : 0.0f);
+    glUniform1f (glGetUniformLocation (m_program, "uShadowOpacity"), m_text.dropShadow->value->getBool ()
+        ? m_text.dropShadowOpacity->value->getFloat () : 0.0f);
+    glUniform1f (glGetUniformLocation (m_program, "uShadowSize"), m_text.dropShadowSize->value->getFloat ());
+    const auto shadow = m_text.dropShadowColor->value->getVec3 ();
+    glUniform3fv (glGetUniformLocation (m_program, "uShadowColor"), 1, glm::value_ptr (shadow));
+    const auto shadowOffset = m_text.dropShadowOffset->value->getVec2 () / static_cast<float> (m_layout.getAtlasSize ());
+    glUniform2fv (glGetUniformLocation (m_program, "uShadowOffset"), 1, glm::value_ptr (shadowOffset));
+    glDrawArrays (GL_TRIANGLES, 0, m_glyphVertices);
+    if (m_colorVertices) {
+        glBindTexture (GL_TEXTURE_2D, m_colorTexture);
+        glActiveTexture (GL_TEXTURE1);
+        glBindTexture (GL_TEXTURE_2D, m_layoutParams.msdf ? m_colorPixelsTexture : m_colorTexture);
+        glUniform1i (glGetUniformLocation (m_program, "uColorTexture"), 1);
+        glActiveTexture (GL_TEXTURE0);
+        glUniform1i (glGetUniformLocation (m_program, "uColorGlyph"), 1);
+        glDrawArrays (GL_TRIANGLES, m_glyphVertices, m_colorVertices);
+    }
     glBindVertexArray (0);
+    glColorMask (previousMask[0], previousMask[1], previousMask[2], previousMask[3]);
 #if !NDEBUG
     glPopDebugGroup ();
 #endif /* DEBUG */
+}
+
+
+glm::vec2 CText::getLayoutOffset () const {
+    const auto size = getRasterSize ();
+    return {m_text.alignment == "left" ? size.x * .5f : m_text.alignment == "right" ? -size.x * .5f : 0,
+            m_text.verticalalign == "top" ? -size.y * .5f : m_text.verticalalign == "bottom" ? size.y * .5f : 0};
 }

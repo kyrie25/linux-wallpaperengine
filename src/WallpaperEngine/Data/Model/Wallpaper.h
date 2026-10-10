@@ -106,6 +106,7 @@ struct SceneData {
     } camera;
 
     ObjectList objects;
+    UserSettingUniquePtr clearEnabled;
 };
 
 class Scene final : public Wallpaper, public SceneData {

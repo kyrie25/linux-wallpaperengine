@@ -35,6 +35,7 @@ public:
 
     void setDestination (std::shared_ptr<const CFBO> drawTo);
     void setInput (std::shared_ptr<const TextureProvider> input);
+    void setTexture (int index, std::shared_ptr<const TextureProvider> texture);
     void setPreviousInput (std::shared_ptr<const TextureProvider> input);
     void setTexCoord (GLuint texcoord);
     void setPosition (GLuint position);
@@ -61,7 +62,7 @@ public:
     // Public uniform setters for external callers (pointer-based, updated per-frame)
     void addUniform (const std::string& name, const float* value, int count = 1);
     void addUniform (const std::string& name, const glm::vec3* value);
-    void addUniform (const std::string& name, const glm::vec4* value);
+    void addUniform (const std::string& name, const glm::vec4* value, int count = 1);
     void addUniform (const std::string& name, const glm::mat4* value);
 
 private:

@@ -1,0 +1,76 @@
+#include "EffectThisObject.h"
+
+#include "WallpaperEngine/Data/Model/DynamicValue.h"
+#include "WallpaperEngine/Data/Model/Object.h"
+#include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Scripting/Adapters/ScriptableObjectAdapter.h"
+#include "WallpaperEngine/Scripting/LayerPropertyWrites.h"
+#include "WallpaperEngine/Scripting/ScriptableObject.h"
+
+#include <limits>
+
+using namespace WallpaperEngine::Scripting;
+using WallpaperEngine::Render::Objects::CImage;
+
+const std::vector<WallpaperEngine::Data::Model::ImageEffectUniquePtr>*
+WallpaperEngine::Scripting::layerEffects (const ScriptableObject* layer) {
+    if (!layer) return nullptr;
+    const auto& object = layer->getObject ();
+    if (object.is<WallpaperEngine::Data::Model::Image> ())
+        return &object.as<WallpaperEngine::Data::Model::Image> ()->effects;
+    return nullptr;
+}
+
+namespace {
+const WallpaperEngine::Data::Model::ImageEffect* effectAt (JSValueConst layer, int index) {
+    const auto* effects = WallpaperEngine::Scripting::layerEffects (
+        WallpaperEngine::Scripting::Adapters::ScriptableObjectAdapter::objectOf (layer));
+    if (!effects || index < 0 || static_cast<size_t> (index) >= effects->size ()) return nullptr;
+    return (*effects)[static_cast<size_t> (index)].get ();
+}
+
+JSValue visibleGet (JSContext* context, JSValueConst, int, JSValueConst*, int index, JSValue* data) {
+    const auto* effect = effectAt (data[0], index);
+    if (!effect || !effect->visible || !effect->visible->value)
+        return JS_ThrowTypeError (context, "Effect is no longer available");
+    return JS_NewBool (context, effect->visible->value->getBool ());
+}
+
+JSValue visibleSet (JSContext* context, JSValueConst, int argc, JSValueConst* argv,
+                    int index, JSValue* data) {
+    const auto* effect = effectAt (data[0], index);
+    if (!effect || !effect->visible || !effect->visible->value)
+        return JS_ThrowTypeError (context, "Effect is no longer available");
+    // IEffect `visible` is a Boolean host property (2.8.42 140004540, type 6).
+    // The shared converter skips any value that is not a Boolean.
+    bool visible = false;
+    if (WallpaperEngine::Scripting::convertLayerBoolean (argc > 0 ? argv[0] : JS_UNDEFINED, visible)
+        == WallpaperEngine::Scripting::LayerWrite::Assign)
+        effect->visible->value->update (visible, WallpaperEngine::Data::Model::DynamicValue::Script);
+    return JS_UNDEFINED;
+}
+}
+
+JSValue WallpaperEngine::Scripting::createEffectThisObject (
+    JSContext* context, JSValueConst layer, size_t effectIndex) {
+    if (effectIndex > static_cast<size_t> (std::numeric_limits<int>::max ()))
+        return JS_ThrowRangeError (context, "Too many image effects");
+    const auto* effect = effectAt (layer, static_cast<int> (effectIndex));
+    if (!effect) return JS_ThrowTypeError (context, "Effect is no longer available");
+    JSValue result = JS_NewObject (context);
+    if (JS_IsException (result)) return result;
+    JSValue captured[] { JS_DupValue (context, layer) };
+    JSValue getter = JS_NewCFunctionData (context, visibleGet, 0,
+                                          static_cast<int> (effectIndex), 1, captured);
+    JSValue setter = JS_NewCFunctionData (context, visibleSet, 1,
+                                          static_cast<int> (effectIndex), 1, captured);
+    JS_FreeValue (context, captured[0]);
+    JSAtom visible = JS_NewAtom (context, "visible");
+    const int defined = JS_DefinePropertyGetSet (context, result, visible, getter, setter,
+                                                 JS_PROP_ENUMERABLE | JS_PROP_CONFIGURABLE);
+    JS_FreeAtom (context, visible);
+    if (defined < 0) { JS_FreeValue (context, result); return JS_EXCEPTION; }
+    JS_DefinePropertyValueStr (context, result, "name",
+                               JS_NewString (context, effect->name.c_str ()), JS_PROP_ENUMERABLE);
+    return result;
+}

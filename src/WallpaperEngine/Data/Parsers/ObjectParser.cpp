@@ -97,6 +97,11 @@ ObjectUniquePtr ObjectParser::parse (const JSON& it, const Project& project) {
 	};
     }
 
+    auto initial = it;
+    initial.erase ("id");
+    basedata.initialConfiguration = initial.dump ();
+    basedata.solid = it.optional<bool> ("solid", true);
+    basedata.disablePropagation = it.optional<bool> ("disablepropagation", false);
     if (imageIt != it.end () && imageIt->is_string ()) {
 	return parseImage (it, project, std::move (basedata), *imageIt);
     } else if (soundIt != it.end () && soundIt->is_array ()) {
@@ -173,6 +178,25 @@ TextUniquePtr ObjectParser::parseText (const JSON& it, const Project& project, O
 	    .alignment = it.optional ("horizontalalign", it.optional ("alignment", std::string ("center"))),
 	    .verticalalign = it.optional ("verticalalign", std::string ("center")),
 	    .padding = parsePadding (it),
+	    .spacing = it.user ("spacing", project.properties, glm::vec2 (0.0f)),
+	    .limitWidth = it.user ("limitwidth", project.properties, false),
+	    .maxWidth = it.user ("maxwidth", project.properties, 500.0f),
+	    .limitRows = it.user ("limitrows", project.properties, false),
+	    .maxRows = it.user ("maxrows", project.properties, 1),
+	    .limitUseEllipsis = it.user ("limituseellipsis", project.properties, false),
+	    .blockAlign = it.user ("blockalign", project.properties, false),
+	    .msdf = it.user ("msdf", project.properties, false),
+	    .outline = it.user ("outline", project.properties, false),
+	    .outlineThickness = it.user ("outlinethickness", project.properties, 4.0f),
+	    .outlineColor = it.color ("outlinecolor", project.properties, Builders::ColorBuilder::Black),
+	    .blur = it.user ("blur", project.properties, false),
+	    .blurSize = it.user ("blursize", project.properties, 6.0f),
+	    .dropShadow = it.user ("dropshadow", project.properties, false),
+	    .dropShadowSize = it.user ("dropshadowsize", project.properties, 6.0f),
+	    .dropShadowOpacity = it.user ("dropshadowopacity", project.properties, 1.0f),
+	    .dropShadowOffset = it.user ("dropshadowoffset", project.properties, glm::vec2 (4.0f)),
+	    .dropShadowColor = it.color ("dropshadowcolor", project.properties, Builders::ColorBuilder::Black),
+
 	}
     );
 }
@@ -246,6 +270,7 @@ std::vector<ImageEffectUniquePtr> ObjectParser::parseEffects (const JSON& it, co
 ImageEffectUniquePtr ObjectParser::parseEffect (const JSON& it, const Project& project) {
     const auto& passsOverrides = it.optional ("passes");
     return std::make_unique<ImageEffect> (ImageEffect {
+	.conditionCombos = it.contains ("combos") ? EffectParser::parseConditionCombos (it["combos"]) : ComboMap {},
 	.id = it.optional<int> ("id", -1),
 	.name = it.optional<std::string> ("name", "Effect without name"),
 	.visible = it.user ("visible", project.properties, true),
@@ -319,11 +344,18 @@ ImageAnimationLayerUniquePtr ObjectParser::parseAnimationLayer (const JSON& it, 
     const auto& properties = project.properties;
 
     return std::make_unique<ImageAnimationLayer> (ImageAnimationLayer {
-	.id = it.require<int> ("id", "Animation layer must have an id"),
+	.id = it.optional<int> ("id", -1),
+	.name = it.optional<std::string> ("name", ""),
 	.rate = it.user ("rate", properties, 1.0f),
 	.visible = it.user ("visible", properties, false),
 	.blend = it.user ("blend", properties, 1.0f),
 	.animation = it.user ("animation", properties, 0),
+	.additive = it.optional ("additive", false),
+	.blendIn = it.optional ("blendin", false),
+	.blendOut = it.optional ("blendout", false),
+	.blendTime = it.optional ("blendtime", 0.5f),
+	.autosort = it.optional ("autosort", false),
+	.index = it.optional<int64_t> ("index"),
     });
 }
 
@@ -379,7 +411,7 @@ ParticleUniquePtr ObjectParser::parseParticle (const JSON& it, const Project& pr
 	if (!particleFile.empty ()) {
 	    try {
 		particleJson
-		    = WallpaperEngine::Data::JSON::JSON::parse (project.assetLocator->readString (particleFile));
+		    = WallpaperEngine::Data::JSON::parseAuthoringJson (project.assetLocator->readString (particleFile), particleFile);
 	    } catch (std::runtime_error& e) {
 		sLog.error ("Cannot load particle file: ", particleFile, " - ", e.what ());
 	    }

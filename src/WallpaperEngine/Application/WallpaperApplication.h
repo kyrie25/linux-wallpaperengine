@@ -32,6 +32,7 @@ using namespace WallpaperEngine::Data::Model;
 class WallpaperApplication {
 public:
     explicit WallpaperApplication (ApplicationContext& context);
+    ~WallpaperApplication ();
 
     /**
      * Prepares the application for rendering.
@@ -92,6 +93,9 @@ private:
      * Initializes subsystems required for application operation
      */
     void initializeSubsystems ();
+    void updateLiveControl ();
+    std::optional<std::filesystem::file_time_type> m_controlModified;
+    std::chrono::steady_clock::time_point m_nextControlPoll {};
 
     /**
      * Loads projects based off the settings

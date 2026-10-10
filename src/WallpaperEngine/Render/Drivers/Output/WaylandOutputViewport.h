@@ -50,6 +50,8 @@ namespace Output {
 	glm::dvec2 mousePos = { 0, 0 };
 	WallpaperEngine::Input::MouseClickStatus leftClick = WallpaperEngine::Input::MouseClickStatus::Released;
 	WallpaperEngine::Input::MouseClickStatus rightClick = WallpaperEngine::Input::MouseClickStatus::Released;
+	wl_cursor_theme* cursorTheme = nullptr;
+	std::chrono::steady_clock::time_point lastSwap {};
 	wl_cursor* pointer = nullptr;
 	wl_surface* cursorSurface = nullptr;
 	bool callbackInitialized = false;

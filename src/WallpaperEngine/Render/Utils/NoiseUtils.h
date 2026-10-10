@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <algorithm>
 #include <glm/glm.hpp>
 
 namespace WallpaperEngine::Render::Utils {
@@ -146,6 +147,50 @@ inline glm::vec3 curlNoise (const glm::vec3& p) {
     float z = (x1.y - x0.y) - (y1.x - y0.x);
 
     return glm::vec3 (x, y, z) / (2.0f * e);
+}
+
+/** wallpaper64.exe sub_14027B170: 2D simplex over the permutation table, roughly -1..1 */
+inline float simplexNoise2D (float x, float y) {
+    constexpr float F2 = 0.36602540f;
+    constexpr float G2 = 0.21132487f;
+    constexpr float G2x2 = 0.42264974f;
+
+    const float skew = (x + y) * F2;
+    const int i = static_cast<int> (std::floor (skew + x));
+    const int j = static_cast<int> (std::floor (skew + y));
+    const float unskew = static_cast<float> (j + i) * G2;
+    const float x0 = x - (static_cast<float> (i) - unskew);
+    const float y0 = y - (static_cast<float> (j) - unskew);
+    const int i1 = x0 > y0 ? 1 : 0;
+    const int j1 = 1 - i1;
+    const float x1 = (x0 - static_cast<float> (i1)) + G2;
+    const float y1 = (y0 - static_cast<float> (j1)) + G2;
+    const float x2 = (x0 - 1.0f) + G2x2;
+    const float y2 = (y0 - 1.0f) + G2x2;
+
+    const auto perm = [] (int index) { return static_cast<int> (PERLIN_PERM[index & 0xff]); };
+    // (h & 0x3c) swaps the axes, bit 0 negates the first one, bit 1 doubles the second one negative instead
+    const auto corner = [] (int h, float cx, float cy, float falloff) {
+	if (falloff < 0.0f) {
+	    return 0.0f;
+	}
+	float u = cx;
+	float v = cy;
+	if ((h & 0x3c) != 0) {
+	    std::swap (u, v);
+	}
+	if ((h & 1) != 0) {
+	    u = -u;
+	}
+	v = (h & 2) != 0 ? v * -2.0f : v + v;
+	falloff *= falloff;
+	return (v + u) * (falloff * falloff);
+    };
+
+    const float n0 = corner (perm (i + perm (j)), x0, y0, (0.5f - x0 * x0) - y0 * y0);
+    const float n1 = corner (perm (i1 + perm (j + j1) + i), x1, y1, (0.5f - x1 * x1) - y1 * y1);
+    const float n2 = corner (perm (i + 1 + perm (j + 1)), x2, y2, (0.5f - x2 * x2) - y2 * y2);
+    return ((n1 + n0) + n2) * 45.230652f;
 }
 
 } // namespace WallpaperEngine::Render::Utils

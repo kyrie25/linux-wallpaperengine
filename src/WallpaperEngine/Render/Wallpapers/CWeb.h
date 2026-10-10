@@ -5,6 +5,8 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <chrono>
+#include <pulse/pulseaudio.h>
 #include <memory>
 #include <string>
 #include <utility>
@@ -35,19 +37,30 @@ public:
     [[nodiscard]] int getHeight () const override { return this->m_height; }
 
     void setSize (int width, int height);
+    void setFrameRate (int fps);
+    void setMuted (bool muted);
+    void setVolume (int volume);
 
 protected:
     void renderFrame (const glm::ivec4& viewport) override;
     void updateMouse (const glm::ivec4& viewport);
+    void createBrowser ();
     const Web& getWeb () const { return *this->getWallpaperData ().as<Web> (); }
 
     friend class CWallpaper;
 
 private:
+    void updateAudioVolume ();
+    static void applyAudioVolume (pa_context*, const pa_sink_input_info*, int, void*);
+    pa_mainloop* m_volumeLoop = nullptr;
+    pa_context* m_volumeContext = nullptr;
+    pa_operation* m_volumeQuery = nullptr;
+    std::chrono::steady_clock::time_point m_nextVolumeQuery = {};
+    int m_volume = 128;
     WallpaperEngine::WebBrowser::WebBrowserContext& m_browserContext;
     CefRefPtr<CefBrowser> m_browser = nullptr;
     CefRefPtr<WallpaperEngine::WebBrowser::CEF::BrowserClient> m_client = nullptr;
-    WallpaperEngine::WebBrowser::CEF::RenderHandler* m_renderHandler = nullptr;
+    CefRefPtr<WallpaperEngine::WebBrowser::CEF::RenderHandler> m_renderHandler = nullptr;
 
     int m_width = 16;
     int m_height = 17;

@@ -39,6 +39,7 @@ find_package(PulseAudio REQUIRED)
 find_package(Freetype REQUIRED)
 find_package(CURL REQUIRED)
 pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebp)
+pkg_check_modules(HARFBUZZ REQUIRED IMPORTED_TARGET harfbuzz)
 
 set(ENABLE_OPT OFF)
 set(SPIRV_CROSS_FORCE_PIC ON)
@@ -146,6 +147,10 @@ add_subdirectory(${CEF_LIBCEF_DLL_WRAPPER_PATH} libcef_dll_wrapper)
 add_subdirectory(src/External/glslang-WallpaperEngine glslang)
 add_subdirectory(src/External/SPIRV-Cross-WallpaperEngine spirv-cross)
 add_subdirectory(src/External/kissfft kissfft)
+file(GLOB MSDFGEN_CORE_SOURCES src/External/msdfgen/core/*.cpp)
+add_library(msdfgen-core STATIC ${MSDFGEN_CORE_SOURCES})
+target_include_directories(msdfgen-core PUBLIC src/External/msdfgen)
+target_compile_definitions(msdfgen-core PUBLIC "MSDFGEN_PUBLIC=")
 add_subdirectory(src/External/argparse argparse)
 set(QJS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory(src/External/quickjs quickjs)
@@ -442,12 +447,24 @@ set(COMMON_SOURCES
     src/WallpaperEngine/Render/Objects/CRenderable.cpp
     src/WallpaperEngine/Render/Objects/CRenderable.h
     src/WallpaperEngine/Render/Objects/CImage.h
+    src/WallpaperEngine/Render/Objects/PuppetMeshParser.cpp
+    src/WallpaperEngine/Render/Objects/PuppetRig.h
+    src/WallpaperEngine/Render/Objects/PuppetRig.cpp
+    src/WallpaperEngine/Render/Objects/PuppetPhysics.h
+    src/WallpaperEngine/Render/Objects/PuppetPhysics.cpp
+    src/WallpaperEngine/Render/Objects/PuppetIK.h
+    src/WallpaperEngine/Render/Objects/PuppetIK.cpp
+    src/WallpaperEngine/Render/Objects/PuppetRootMotion.h
+    src/WallpaperEngine/Render/Objects/PuppetRootMotion.cpp
+    src/WallpaperEngine/Render/Objects/PuppetClipping.h
+    src/WallpaperEngine/Render/Objects/PuppetClipping.cpp
     src/WallpaperEngine/Render/Objects/CImage.cpp
     src/WallpaperEngine/Render/Objects/CSound.h
     src/WallpaperEngine/Render/Objects/CSound.cpp
     src/WallpaperEngine/Render/Objects/CParticle.h
     src/WallpaperEngine/Render/Objects/CParticle.cpp
     src/WallpaperEngine/Render/Objects/CText.h
+    src/WallpaperEngine/Render/Objects/TextLayout.cpp
     src/WallpaperEngine/Render/Objects/CText.cpp
 
     src/WallpaperEngine/Render/CFBO.h
@@ -553,6 +570,12 @@ set(COMMON_SOURCES
     src/WallpaperEngine/Scripting/ScriptPropertiesObject.h
     src/WallpaperEngine/Scripting/ScriptPropertiesObject.cpp
     src/WallpaperEngine/Scripting/ScriptEngine.cpp
+    src/WallpaperEngine/Scripting/Modules/ScriptModuleAssets.cpp
+    src/WallpaperEngine/Scripting/LocalStorageObject.cpp
+    src/WallpaperEngine/Scripting/PuppetScriptObject.cpp
+    src/WallpaperEngine/Scripting/EffectThisObject.cpp
+    src/WallpaperEngine/Scripting/MaterialThisObject.cpp
+    src/WallpaperEngine/Scripting/TextureAnimationObject.cpp
     src/WallpaperEngine/Scripting/ScriptableObject.h
     src/WallpaperEngine/Scripting/ScriptableObject.cpp
 
@@ -577,13 +600,23 @@ if(BUILD_TESTING)
         src/WallpaperEngine/Testing/Cases/PropertyParser.cpp
         src/WallpaperEngine/Testing/Cases/MediaArtwork.cpp
         src/WallpaperEngine/Testing/Cases/AlbumArtworkUpload.cpp
+        src/WallpaperEngine/Testing/Cases/WebRenderLifecycle.cpp
+        src/WallpaperEngine/Testing/Cases/SpectrumPipeline.cpp
+        src/WallpaperEngine/Testing/Cases/SpectrumListeners.cpp
         src/WallpaperEngine/Testing/Cases/TextInputProperty.cpp
+        src/WallpaperEngine/Testing/Cases/TextLayoutRules.cpp
         src/WallpaperEngine/Testing/Cases/JsonVectorParsing.cpp
+        src/WallpaperEngine/Testing/Cases/FramePacer.cpp
         src/WallpaperEngine/Testing/Cases/TextureParser.cpp
         src/WallpaperEngine/Testing/Cases/AuthoringJson.cpp
         src/WallpaperEngine/Testing/Cases/EncodedImages.cpp
-        src/WallpaperEngine/Testing/Cases/SpectrumPipeline.cpp
-        src/WallpaperEngine/Testing/Cases/SpectrumListeners.cpp)
+        src/WallpaperEngine/Testing/Cases/PuppetMeshParser.cpp
+        src/WallpaperEngine/Testing/Cases/PortRegression.cpp
+        src/WallpaperEngine/Testing/Cases/LocalStorage.cpp
+        src/WallpaperEngine/Testing/Cases/TextureAnimation.cpp
+        src/WallpaperEngine/Testing/Cases/ScriptTextureAnimation.cpp
+        src/WallpaperEngine/Testing/Cases/SceneScriptLayerWrites.cpp
+        src/WallpaperEngine/Testing/Cases/SceneCursorState.cpp)
 endif()
 
 add_library(
@@ -610,6 +643,8 @@ target_link_libraries (linux-wallpaperengine-lib PUBLIC
     ${DBUS_LIBRARIES}
     CURL::libcurl
     PkgConfig::WEBP
+    PkgConfig::HARFBUZZ
+    msdfgen-core
     kissfft
     glslang
     spirv-cross-core
@@ -638,6 +673,8 @@ if (BUILD_TESTING)
         ${DBUS_LIBRARIES}
         CURL::libcurl
     PkgConfig::WEBP
+    PkgConfig::HARFBUZZ
+    msdfgen-core
         kissfft
         glslang
         spirv-cross-core
@@ -710,6 +747,10 @@ REPLACED_SET_EXECUTABLE_TARGET_PROPERTIES(linux-wallpaperengine-lib)
 add_executable(linux-wallpaperengine
     src/main.cpp)
 
+# CEF's close() interceptor resolves libc with RTLD_NEXT. Load CEF before libc,
+# including when the executable only calls it through the renderer library.
+target_link_options(linux-wallpaperengine PRIVATE
+    "LINKER:--push-state,--no-as-needed,$<TARGET_FILE:libcef_lib>,--pop-state")
 target_link_libraries (linux-wallpaperengine PUBLIC linux-wallpaperengine-lib)
 
 # Install the main executable and shared library via install(TARGETS)
@@ -720,10 +761,15 @@ install(TARGETS linux-wallpaperengine
 install(TARGETS linux-wallpaperengine-lib
     LIBRARY DESTINATION .
 )
+install(FILES src/External/msdfgen/LICENSE.txt
+    DESTINATION share/licenses/linux-wallpaperengine/msdfgen)
 
 # Install everything else from the output directory (CEF resources, helper binaries, etc.)
 # but exclude the files already handled by install(TARGETS) above.
 install(DIRECTORY ${TARGET_OUTPUT_DIRECTORY}/ DESTINATION .
     PATTERN "linux-wallpaperengine" EXCLUDE
     PATTERN "liblinux-wallpaperengine-lib.so" EXCLUDE
+    PATTERN "tests" EXCLUDE
+    PATTERN "api-test" EXCLUDE
+    PATTERN "run-test262" EXCLUDE
 )

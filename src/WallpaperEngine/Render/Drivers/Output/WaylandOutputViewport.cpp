@@ -219,19 +219,21 @@ void WaylandOutputViewport::setupLS () {
     eglSurface = m_driver->getEGLContext ()->eglCreatePlatformWindowSurfaceEXT (
 	m_driver->getEGLContext ()->display, m_driver->getEGLContext ()->config, eglWindow, nullptr
     );
+    if (eglSurface == EGL_NO_SURFACE) {
+	sLog.exception ("Failed to create EGL surface for ", name, ": ", eglGetError ());
+    }
     wl_surface_commit (surface);
     wl_display_roundtrip (m_driver->getWaylandContext ()->display);
     wl_display_flush (m_driver->getWaylandContext ()->display);
 
     static const auto XCURSORSIZE = getenv ("XCURSOR_SIZE") ? std::stoi (getenv ("XCURSOR_SIZE")) : 24;
-    const auto PRCURSORTHEME
-	= wl_cursor_theme_load (getenv ("XCURSOR_THEME"), XCURSORSIZE * scale, m_driver->getWaylandContext ()->shm);
+    this->cursorTheme = wl_cursor_theme_load (getenv ("XCURSOR_THEME"), XCURSORSIZE * scale, m_driver->getWaylandContext ()->shm);
 
-    if (!PRCURSORTHEME) {
+    if (!this->cursorTheme) {
 	sLog.exception ("Failed to get a cursor theme");
     }
 
-    pointer = wl_cursor_theme_get_cursor (PRCURSORTHEME, "left_ptr");
+    pointer = wl_cursor_theme_get_cursor (this->cursorTheme, "left_ptr");
     cursorSurface = wl_compositor_create_surface (m_driver->getWaylandContext ()->compositor);
 
     if (!cursorSurface) {
@@ -242,9 +244,10 @@ void WaylandOutputViewport::setupLS () {
 	    m_driver->getEGLContext ()->display, eglSurface, eglSurface, m_driver->getEGLContext ()->context
 	)
 	== EGL_FALSE) {
-	sLog.exception ("Failed to make egl current");
+        sLog.exception ("Failed to make EGL current for ", name, ": ", eglGetError ());
     }
 
+    eglSwapInterval (m_driver->getEGLContext ()->display, 0);
     this->m_driver->getOutput ().reset ();
 }
 
@@ -264,9 +267,12 @@ void WaylandOutputViewport::swapOutput () {
     this->callbackInitialized = true;
 
     this->makeCurrent ();
+    if (frameCallback) wl_callback_destroy (frameCallback);
     frameCallback = wl_surface_frame (surface);
     wl_callback_add_listener (frameCallback, &frameListener, this);
-    eglSwapBuffers (m_driver->getEGLContext ()->display, this->eglSurface);
+    if (eglSwapBuffers (m_driver->getEGLContext ()->display, this->eglSurface))
+        m_driver->frameRendered ();
+    this->lastSwap = std::chrono::steady_clock::now ();
     wl_surface_set_buffer_scale (surface, scale);
     wl_surface_damage_buffer (surface, 0, 0, INT32_MAX, INT32_MAX);
     wl_surface_commit (surface);

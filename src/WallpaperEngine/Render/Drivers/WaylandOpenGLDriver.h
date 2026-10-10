@@ -2,6 +2,7 @@
 
 #ifdef ENABLE_WAYLAND
 
+#include "FramePacer.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GL/glew.h>
@@ -70,6 +71,7 @@ public:
     void hideWindow () override;
     glm::ivec2 getFramebufferSize () const override;
     uint32_t getFrameCounter () const override;
+    void frameRendered () { ++m_frameCounter; }
     void dispatchEventQueue () override;
     [[nodiscard]] void* getProcAddress (const char* name) const override;
 
@@ -99,6 +101,7 @@ private:
     void initGLEW ();
     void finishEGL () const;
 
+    FramePacer m_framePacer {30};
     uint32_t m_frameCounter = 0;
     ApplicationContext& m_context;
     WaylandMouseInput m_mouseInput;

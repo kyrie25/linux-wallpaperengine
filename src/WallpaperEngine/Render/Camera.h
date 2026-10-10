@@ -20,6 +20,7 @@ public:
     ~Camera ();
 
     void setOrthogonalProjection (const float width, const float height);
+    void setTransforms (const glm::vec3* eye, const glm::vec3* center, const glm::vec3* up, const float* zoom);
 
     [[nodiscard]] const glm::vec3& getCenter () const;
     [[nodiscard]] const glm::vec3& getEye () const;
@@ -40,6 +41,9 @@ private:
     bool m_isOrthogonal = false;
     glm::mat4 m_projection = {};
     glm::mat4 m_lookat = {};
+    glm::vec3 m_scriptEye, m_scriptCenter, m_scriptUp;
+    float m_scriptZoom = 1.0f;
+    bool m_hasScriptTransforms = false;
     const SceneData::Camera& m_camera;
     Wallpapers::CScene& m_scene;
 };

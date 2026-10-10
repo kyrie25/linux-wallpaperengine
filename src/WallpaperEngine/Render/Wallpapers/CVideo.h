@@ -22,6 +22,7 @@ public:
     [[nodiscard]] int getHeight () const override;
 
     void setPause (bool newState) override;
+    void setVolume (int volume) { m_player->setVolume (volume * 100.0 / 128.0); }
 
 protected:
     void renderFrame (const glm::ivec4& viewport) override;

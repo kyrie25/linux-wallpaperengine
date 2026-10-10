@@ -1,14 +1,17 @@
 #pragma once
 #include "quickjs.h"
 
-#include <chrono>
+#include <array>
 #include <map>
+#include <vector>
+#include <utility>
 
 namespace WallpaperEngine::Render::Wallpapers {
 class CScene;
 }
 namespace WallpaperEngine::Scripting {
 class ScriptEngine;
+class ScriptableObject;
 class EngineObject {
 public:
     EngineObject (ScriptEngine& engine, Render::Wallpapers::CScene& scene);
@@ -18,24 +21,34 @@ public:
     JSValue getInstance () const { return m_instance; }
     ScriptEngine& getEngine () const { return m_engine; }
     uint32_t getInstanceId () const { return m_instanceId; }
-    uint32_t reserveNextTimeoutId (JSValue function, uint64_t duration);
-    uint32_t reserveNextIntervalId (JSValue function, uint64_t duration);
-    void clearTimeout (uint32_t id);
-    void clearInterval (uint32_t id);
+    uint32_t reserveTimer (JSValue function, float duration, bool interval);
+    bool clearTimer (uint32_t id);
+    void forgetObject (ScriptableObject& object);
+    JSValue registerAudioBuffers (uint32_t resolution);
+    JSValue exchangeReceiver (JSValue value) { return std::exchange (m_activeReceiver, value); }
 
     void tick ();
 
 protected:
-    struct Timeout {
+    struct Timer {
 	JSValue callback;
-	std::chrono::milliseconds duration;
-	std::chrono::steady_clock::time_point next;
+	JSValue receiver;
+	JSValue layer;
+        JSValue object;
+	float duration;
+	float remaining;
+	bool interval;
     };
 
-    uint32_t m_nextTimeoutId = 0;
-    uint32_t m_nextIntervalId = 0;
-    std::map<uint32_t, Timeout> m_intervals;
-    std::map<uint32_t, Timeout> m_timeouts;
+    uint32_t m_nextTimerId = 0;
+    std::map<uint32_t, Timer> m_timers;
+    JSValue m_activeReceiver = JS_UNDEFINED;
+    struct AudioBuffers {
+	uint32_t resolution;
+	std::array<JSValue, 3> arrays;
+        ScriptableObject* owner = nullptr;
+    };
+    std::vector<AudioBuffers> m_audioBuffers;
     Render::Wallpapers::CScene& m_scene;
     ScriptEngine& m_engine;
 

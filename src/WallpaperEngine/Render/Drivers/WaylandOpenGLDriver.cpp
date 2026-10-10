@@ -19,6 +19,8 @@ extern "C" {
 #include <algorithm>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
+#include <cerrno>
 
 using namespace WallpaperEngine::Render::Drivers;
 
@@ -28,6 +30,7 @@ static void handlePointerEnter (
 ) {
     const auto driver = static_cast<WaylandOpenGLDriver*> (data);
     const auto viewport = driver->surfaceToViewport (surface);
+    if (!viewport) return;
     driver->viewportInFocus = viewport;
     viewport->mousePos = {
 	wl_fixed_to_double (surface_x) * viewport->scale,
@@ -140,7 +143,10 @@ handleGlobal (void* data, struct wl_registry* registry, uint32_t name, const cha
 }
 
 static void handleGlobalRemoved (void* data, struct wl_registry* registry, uint32_t id) {
-    // todo: outputs
+    const auto driver = static_cast<WaylandOpenGLDriver*> (data);
+    const auto found = std::ranges::find (driver->m_screens, id, &Output::WaylandOutputViewport::waylandName);
+    if (found != driver->m_screens.end ()) driver->onLayerClose (*found);
+
 }
 
 constexpr struct wl_registry_listener registryListener = {
@@ -254,36 +260,21 @@ void WaylandOpenGLDriver::finishEGL () const {
 }
 
 void WaylandOpenGLDriver::onLayerClose (Output::WaylandOutputViewport* viewport) {
-    sLog.error ("Compositor closed our LS, freeing data...");
-
+    if (this->viewportInFocus == viewport) this->viewportInFocus = nullptr;
+    if (viewport->frameCallback) wl_callback_destroy (viewport->frameCallback);
     if (viewport->eglSurface) {
-	eglDestroySurface (m_eglContext.display, viewport->eglSurface);
+        eglMakeCurrent (m_eglContext.display, EGL_NO_SURFACE, EGL_NO_SURFACE, m_eglContext.context);
+        eglDestroySurface (m_eglContext.display, viewport->eglSurface);
     }
-
-    if (viewport->eglWindow) {
-	wl_egl_window_destroy (viewport->eglWindow);
-    }
-
-    if (viewport->layerSurface) {
-	zwlr_layer_surface_v1_destroy (viewport->layerSurface);
-    }
-
-    if (viewport->xdgOutput) {
-	zxdg_output_v1_destroy (viewport->xdgOutput);
-	viewport->xdgOutput = nullptr;
-    }
-
-    if (viewport->surface) {
-	wl_surface_destroy (viewport->surface);
-    }
-
-    // remove the output from the list
+    if (viewport->eglWindow) wl_egl_window_destroy (viewport->eglWindow);
+    if (viewport->layerSurface) zwlr_layer_surface_v1_destroy (viewport->layerSurface);
+    if (viewport->xdgOutput) zxdg_output_v1_destroy (viewport->xdgOutput);
+    if (viewport->surface) wl_surface_destroy (viewport->surface);
+    if (viewport->cursorSurface) wl_surface_destroy (viewport->cursorSurface);
+    if (viewport->cursorTheme) wl_cursor_theme_destroy (viewport->cursorTheme);
+    if (viewport->output) wl_output_release (viewport->output);
     std::erase (this->m_screens, viewport);
-
-    // reset the viewports
     this->getOutput ().reset ();
-
-    // finally free memory used by the viewport
     delete viewport;
 }
 
@@ -392,62 +383,56 @@ void WaylandOpenGLDriver::initGLEW () {
 }
 
 WaylandOpenGLDriver::~WaylandOpenGLDriver () {
-    // destroy xdg outputs
-    for (const auto& screen : this->m_screens) {
-	if (screen->xdgOutput) {
-	    zxdg_output_v1_destroy (screen->xdgOutput);
-	    screen->xdgOutput = nullptr;
-	}
-    }
-
-    // stop EGL
-    eglMakeCurrent (EGL_NO_DISPLAY, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-
-    if (m_eglContext.context != EGL_NO_CONTEXT) {
-	eglDestroyContext (m_eglContext.display, m_eglContext.context);
-    }
-
-    eglTerminate (m_eglContext.display);
-    eglReleaseThread ();
-
-    // disconnect from wayland display
-    if (this->m_waylandContext.display) {
-	wl_display_disconnect (this->m_waylandContext.display);
-    }
+    while (!this->m_screens.empty ()) this->onLayerClose (this->m_screens.back ());
+    this->finishEGL ();
+    if (this->m_waylandContext.display) wl_display_disconnect (this->m_waylandContext.display);
 }
 
 void WaylandOpenGLDriver::dispatchEventQueue () {
-    static bool initialized = false;
-
-    if (!initialized) {
-	initialized = true;
-
-	for (const auto& viewport : this->getOutput ().getViewports () | std::views::values) {
-	    this->getApp ().update (viewport);
-	}
+    for (const auto& viewport : this->m_screens) {
+        if (!viewport->layerSurface && viewport->initialized
+            && (this->m_context.settings.general.screenBackgrounds.contains (viewport->name)
+                || std::ranges::any_of (m_context.settings.general.spanGroups, [&] (const auto& group) {
+                    return std::ranges::find (group.screens, viewport->name) != group.screens.end ();
+                }))) {
+            if (!viewport->xdgOutput && m_waylandContext.xdgOutputManager)
+                viewport->setupXdgOutput (m_waylandContext.xdgOutputManager);
+            viewport->setupLS ();
+        }
     }
-
-    // TODO: FRAMETIME CONTROL SHOULD GO BACK TO THE CWALLPAPAERAPPLICATION ONCE ACTUAL PARTICLES ARE IMPLEMENTED
-    // TODO: AS THOSE, MORE THAN LIKELY, WILL REQUIRE OF A DIFFERENT PROCESSING RATE
-
-    // TODO: WRITE A NON-BLOCKING VERSION OF THIS ONCE PARTICLE SIMULATION STARTS WORKING
-    // TODO: OTHERWISE wl_display_dispatch WILL BLOCK IF NO SURFACES ARE BEING DRAWN
-    static float startTime, endTime, minimumTime = 1.0f / this->m_context.settings.render.maximumFPS;
-    // get the start time of the frame
-    startTime = this->getRenderTime ();
-
-    if (wl_display_dispatch (m_waylandContext.display) == -1) {
-	m_requestedExit = true;
+    // Recover an initial or missed compositor callback. Policy pause uses SIGSTOP
+    // in the supervisor, so a paused process does not enter this loop.
+    const auto now = std::chrono::steady_clock::now ();
+    for (const auto& viewport : this->m_screens) {
+        if (viewport->layerSurface && now - viewport->lastSwap > std::chrono::seconds (1))
+            this->getApp ().update (viewport);
     }
-
-    m_frameCounter++;
-
-    endTime = this->getRenderTime ();
-
-    // ensure the frame time is correct to not overrun FPS
-    if ((endTime - startTime) < minimumTime) {
-	usleep ((minimumTime - (endTime - startTime)) * CLOCKS_PER_SEC);
+    auto* display = m_waylandContext.display;
+    while (wl_display_prepare_read (display) != 0) {
+        if (wl_display_dispatch_pending (display) == -1) { m_requestedExit = true; return; }
     }
+    short events = POLLIN;
+    if (wl_display_flush (display) == -1) {
+        if (errno == EAGAIN) events |= POLLOUT;
+        else { wl_display_cancel_read (display); m_requestedExit = true; return; }
+    }
+    pollfd fd {wl_display_get_fd (display), events, 0};
+    const int ready = poll (&fd, 1, 100);
+    if (ready > 0 && (fd.revents & POLLIN)) {
+        if (wl_display_read_events (display) == -1) { m_requestedExit = true; return; }
+    } else {
+        wl_display_cancel_read (display);
+    }
+    if ((ready < 0 && errno != EINTR) || (fd.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+        m_requestedExit = true; return;
+    }
+    if (fd.revents & POLLOUT) wl_display_flush (display);
+    if (wl_display_dispatch_pending (display) == -1) { m_requestedExit = true; return; }
+    this->m_framePacer.setFPS (this->m_context.settings.render.maximumFPS);
+    const auto done = FramePacer::Clock::now ();
+    if (const auto milliseconds = this->m_framePacer.sleepMilliseconds (done); milliseconds > 0)
+        usleep (static_cast<useconds_t> (milliseconds * 1000));
+    this->m_framePacer.woke (done, FramePacer::Clock::now ());
 }
 
 Output::Output& WaylandOpenGLDriver::getOutput () { return this->m_output; }

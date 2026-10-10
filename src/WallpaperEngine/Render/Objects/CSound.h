@@ -27,7 +27,6 @@ protected:
 
 private:
     std::map<int, Audio::AudioStream*> m_audioStreams = {};
-    bool m_scriptInitialized = false;
 
     const Sound& m_sound;
 };

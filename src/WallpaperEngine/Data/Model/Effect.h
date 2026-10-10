@@ -4,11 +4,13 @@
 #include <string>
 
 #include "Types.h"
+#include "EffectConditions.h"
 
 namespace WallpaperEngine::Data::Model {
 enum PassCommandType { Command_Copy = 0, Command_Swap = 1 };
 
 struct FBO {
+    EffectConditions conditions;
     std::string name;
     std::string format;
     float scale;
@@ -16,6 +18,7 @@ struct FBO {
 };
 
 struct EffectPass {
+    EffectConditions conditions;
     /** The material to use for this effect's pass */
     std::optional<MaterialUniquePtr> material;
     /** Texture bindings for this effect's pass */

@@ -22,7 +22,7 @@ WallpaperUniquePtr WallpaperParser::parse (const JSON& file, Project& project) {
 }
 
 SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) {
-    const auto scene = JSON::parse (project.assetLocator->readString (file));
+    const auto scene = WallpaperEngine::Data::JSON::parseAuthoringJson (project.assetLocator->readString (file), file);
     const auto camera = scene.require ("camera", "Scenes must have a camera section");
     const auto general = scene.require ("general", "Scenes must have a general section");
     const auto projectionOpt = general.optional ("orthogonalprojection");
@@ -78,6 +78,7 @@ SceneUniquePtr WallpaperParser::parseScene (const JSON& file, Project& project) 
                 }
             },
             .objects = parseObjects (objects, project),
+            .clearEnabled = general.user ("clearenabled", properties, true),
         }
     );
 }

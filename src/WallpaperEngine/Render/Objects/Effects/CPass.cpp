@@ -11,6 +11,8 @@
 
 #include "WallpaperEngine/Render/CFBO.h"
 #include "WallpaperEngine/Render/Objects/CImage.h"
+#include "WallpaperEngine/Scripting/MaterialThisObject.h"
+#include "WallpaperEngine/Scripting/Adapters/ScriptableObjectAdapter.h"
 
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariable.h"
 #include "WallpaperEngine/Render/Shaders/Variables/ShaderVariableFloat.h"
@@ -55,6 +57,25 @@ CPass::CPass (
     m_override (override.has_value () ? override.value ().get () : DEFAULT_OVERRIDE), m_target (target),
     m_blendingmode (pass.blending), m_vao (GL_NONE) {
     this->setupShaders ();
+    if (auto* layer = dynamic_cast<Scripting::ScriptableObject*> (&renderable)) {
+        auto& engine = layer->getScene ().getScriptEngine ();
+        JSValue instance = engine.getAdapters ().object->instantiate (*layer);
+        std::map<std::string, const UserSetting*> constants;
+        for (const auto& [name, setting] : m_pass.constants) constants[name] = setting.get ();
+        for (const auto& [name, setting] : m_override.constants) constants[name] = setting.get ();
+        std::map<std::string, DynamicValue::UnderlyingType> types;
+        for (const auto& [name, setting] : constants) {
+            const auto [vertex, fragment] = m_shader->findParameter (name);
+            const auto* parameter = vertex ? vertex : fragment;
+            types[name] = parameter ? parameter->getType () : setting->value->getType ();
+        }
+        JSValue owner = Scripting::createMaterialThisObject (engine.getContext (), instance, constants, types);
+        for (const auto& [name, setting] : constants)
+            engine.queueScript ("material" + std::to_string (layer->getId ()) + "[" + std::to_string (m_programID) + "]." + name,
+                *setting->value, *layer, owner, types.at (name));
+        JS_FreeValue (engine.getContext (), owner);
+        JS_FreeValue (engine.getContext (), instance);
+    }
     glGenVertexArrays (1, &m_vao);
 }
 
@@ -168,16 +189,9 @@ void CPass::setupRenderFramebuffer () const {
 	    break;
     }
 
-    switch (this->m_pass.depthwrite) {
-	case DepthwriteMode_Enabled:
-	    glDepthMask (true);
-	    break;
-
-	case DepthwriteMode_Disabled:
-	default:
-	    glDepthMask (false);
-	    break;
-    }
+    const bool blended = this->getBlendingMode () == BlendingMode_Translucent
+	|| this->getBlendingMode () == BlendingMode_Additive;
+    glDepthMask (!blended && this->m_pass.depthwrite == DepthwriteMode_Enabled);
 }
 
 void CPass::setupRenderTexture () {
@@ -257,11 +271,14 @@ CPass::resolveTextureAnimationState (const std::shared_ptr<const TextureProvider
     double currentRenderTime = fmod (
 	static_cast<double> (this->getContext ().getDriver ().getRenderTime ()), this->m_renderable.getAnimationTime ()
     );
+    const auto* image = dynamic_cast<const CImage*> (&this->m_renderable);
+    const auto* overrideFrame = image ? image->getTextureAnimationFrame (*texture) : nullptr;
 
     for (const auto& frameCur : texture->getFrames ()) {
+        if (overrideFrame && frameCur.get () != overrideFrame) continue;
 	currentRenderTime -= frameCur->frametime;
 
-	if (currentRenderTime > 0.0f) {
+	if (!overrideFrame && currentRenderTime > 0.0f) {
 	    continue;
 	}
 
@@ -377,9 +394,8 @@ void CPass::setupRenderUniforms () {
 	    case Integer:
 		glUniform1iv (value->id, value->count, static_cast<const int*> (value->value));
 		break;
-	    // TODO: THESE MIGHT NEED SPECIAL TREATMENT? IDK ONLY SUPPORT 1 FOR NOW
-	    case Vector4:
-		glUniform4fv (value->id, 1, glm::value_ptr (*static_cast<const glm::vec4*> (value->value)));
+    case Vector4:
+		glUniform4fv (value->id, value->count, glm::value_ptr (*static_cast<const glm::vec4*> (value->value)));
 		break;
 	    case Vector3:
 		glUniform3fv (value->id, 1, glm::value_ptr (*static_cast<const glm::vec3*> (value->value)));
@@ -502,12 +518,19 @@ void CPass::render () {
     }
 
     this->setupRenderFramebuffer ();
+    const bool rootSceneTarget = this->m_drawTo == this->m_renderable.getScene ().getFBO ();
+    GLboolean previousMask[4];
+    if (rootSceneTarget) {
+	glGetBooleanv (GL_COLOR_WRITEMASK, previousMask);
+	glColorMask (previousMask[0], previousMask[1], previousMask[2], GL_FALSE);
+    }
     this->setupRenderTexture ();
     this->setupRenderUniforms ();
     this->setupRenderReferenceUniforms ();
     this->setupRenderAttributes ();
     this->renderGeometry ();
     this->cleanupRenderSetup ();
+    if (rootSceneTarget) glColorMask (previousMask[0], previousMask[1], previousMask[2], previousMask[3]);
 }
 
 std::shared_ptr<const FBOProvider> CPass::getFBOProvider () const { return this->m_fboProvider; }
@@ -517,6 +540,12 @@ const CRenderable& CPass::getRenderable () const { return this->m_renderable; }
 void CPass::setDestination (std::shared_ptr<const CFBO> drawTo) { this->m_drawTo = std::move (drawTo); }
 
 void CPass::setInput (std::shared_ptr<const TextureProvider> input) { this->m_input = std::move (input); }
+
+void CPass::setTexture (int index, std::shared_ptr<const TextureProvider> texture) {
+    this->m_textures[index] = std::make_shared<TextureChainEntry> (TextureChainEntry { std::move (texture), nullptr });
+    this->addUniform ("g_Texture" + std::to_string (index), index);
+    this->addUniform ("g_Texture" + std::to_string (index) + "Resolution", this->m_textures[index]->texture->getResolution ());
+}
 
 void CPass::setPreviousInput (std::shared_ptr<const TextureProvider> input) {
     this->m_previousInput = std::move (input);
@@ -874,16 +903,16 @@ void CPass::setupUniforms () {
     const auto& recorder = this->m_renderable.getScene ().getAudioContext ().getRecorder ();
 
     // lighting variables
-    this->addUniform ("g_LightAmbientColor", sceneData.colors.ambient->value->getVec3 ());
-    this->addUniform ("g_LightSkylightColor", sceneData.colors.skylight->value->getVec3 ());
+    this->addUniform ("g_LightAmbientColor", &sceneData.colors.ambient->value->getVec3 ());
+    this->addUniform ("g_LightSkylightColor", &sceneData.colors.skylight->value->getVec3 ());
     // register variables like brightness and alpha with some default value
-    this->addUniform ("g_Brightness", renderable.getBrightness ());
-    this->addUniform ("g_UserAlpha", renderable.getUserAlpha ());
-    this->addUniform ("g_Alpha", renderable.getAlpha ());
-    this->addUniform ("g_Color", renderable.getColor ());
-    this->addUniform ("g_Color4", renderable.getColor4 ());
+    this->addUniform ("g_Brightness", &renderable.getBrightness ());
+    this->addUniform ("g_UserAlpha", &renderable.getUserAlpha ());
+    this->addUniform ("g_Alpha", &renderable.getAlpha ());
+    this->addUniform ("g_Color", &renderable.getColor ());
+    this->addUniform ("g_Color4", &renderable.getColor4 ());
     if (!this->m_uniforms.contains ("g_CompositeColor")) {
-	this->addUniform ("g_CompositeColor", renderable.getCompositeColor ());
+	this->addUniform ("g_CompositeColor", &renderable.getCompositeColor ());
     }
     // add some external variables
     this->addUniform ("g_Time", &g_Time);
@@ -1101,8 +1130,8 @@ void CPass::addUniform (const std::string& name, const glm::vec4 value) {
     this->addUniform (name, UniformType::Vector4, value);
 }
 
-void CPass::addUniform (const std::string& name, const glm::vec4* value) {
-    this->addUniform (name, UniformType::Vector4, value, 1);
+void CPass::addUniform (const std::string& name, const glm::vec4* value, int count) {
+    this->addUniform (name, UniformType::Vector4, value, count);
 }
 
 void CPass::addUniform (const std::string& name, const glm::vec4** value) {

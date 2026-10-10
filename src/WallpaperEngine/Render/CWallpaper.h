@@ -58,6 +58,8 @@ public:
      * Pause the renderer
      */
     virtual void setPause (bool newState);
+    void setScaling (WallpaperState::TextureUVsScaling scaling) { m_state.setTextureUVsStrategy (scaling); }
+    void setAlignment (const glm::vec2& alignment) { m_state.setAlignment (alignment); }
 
     /**
      * @return The container to resolve files for this wallpaper

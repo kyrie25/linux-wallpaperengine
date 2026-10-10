@@ -9,13 +9,22 @@ class CScene;
 namespace WallpaperEngine::Scripting {
 class ScriptableObject : virtual public CObject {
 public:
+    struct Lifetime { ScriptableObject* object; };
     struct PropertyEntry {
 	std::string key;
 	DynamicValue& value;
+        DynamicValue::UnderlyingType type;
     };
 
     ScriptableObject (Wallpapers::CScene& scene, const Object& object);
-    virtual ~ScriptableObject () = default;
+    ~ScriptableObject () override;
+    std::shared_ptr<Lifetime> getLifetime () const { return m_lifetime; }
+    bool isSolid () const { return m_solid; }
+    bool disablesCursorPropagation () const { return m_disablePropagation; }
+    void setSolid (bool solid) { m_solid = solid; }
+    void setDisablePropagation (bool disabled) { m_disablePropagation = disabled; }
+    const std::string& getScriptName () const { return m_scriptName; }
+    void setScriptName (std::string name) { m_scriptName = std::move (name); }
 
     DynamicValue& getProperty (const std::string& name);
 
@@ -25,9 +34,13 @@ public:
     virtual void stop () { }
 
 protected:
-    void registerProperty (const std::string& name, DynamicValue& value);
+    void registerProperty (const std::string& name, DynamicValue& value,
+                           DynamicValue::UnderlyingType type = DynamicValue::Null);
 
 private:
+    bool m_solid, m_disablePropagation;
+    std::string m_scriptName;
+    std::shared_ptr<Lifetime> m_lifetime = std::make_shared<Lifetime> (Lifetime {this});
     std::map<std::string, PropertyEntry> m_properties;
 };
 }

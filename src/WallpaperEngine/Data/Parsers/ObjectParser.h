@@ -15,6 +15,7 @@ using namespace WallpaperEngine::Data::Model;
 
 class ObjectParser {
 public:
+    static ImageAnimationLayerUniquePtr parseAnimationLayer (const JSON& it, const Project& project);
     static ObjectUniquePtr parse (const JSON& it, const Project& project);
 
 private:
@@ -31,7 +32,6 @@ private:
     static ImageEffectPassOverrideUniquePtr parseEffectPass (const JSON& it, const Project& project);
     static ComboMap parseComboMap (const JSON& it);
     static std::vector<ImageAnimationLayerUniquePtr> parseAnimationLayers (const JSON& it, const Project& project);
-    static ImageAnimationLayerUniquePtr parseAnimationLayer (const JSON& it, const Project& project);
 
     // Particle parsing helpers
     static ParticleEmitter parseParticleEmitter (const JSON& it);

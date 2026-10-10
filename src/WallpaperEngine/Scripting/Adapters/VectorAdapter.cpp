@@ -5,14 +5,16 @@
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
 
 #include <variant>
+#include <cmath>
+#include <limits>
+#include <locale>
+#include <sstream>
 
 using namespace WallpaperEngine::Data::Utils;
 using namespace WallpaperEngine::Data::Model;
 using namespace WallpaperEngine::Scripting::Adapters;
 
-static uint32_t VectorInstanceId = 0;
 static uint32_t VectorAdapterInstanceId = 0;
-static constexpr int InvalidVectorInstanceId = 0;
 
 // magic value used to ensure the assigned opaque value we got back is valid
 #define VEC_OPAQUE_MAGIC 0xdeadbee0
@@ -35,7 +37,7 @@ template <int components> struct VectorOpaqueContainer {
     int magic;
     VectorAdapter<components>& adapter;
     DynamicValue& value;
-    uint32_t id;
+    DynamicValueUniquePtr ownedValue;
 };
 
 template <int components> auto vector_new () -> decltype (auto) {
@@ -109,6 +111,10 @@ template <int components> auto vector_get (JSContext* ctx, JSValue source) -> de
 	JSValue y = JS_GetPropertyStr (ctx, source, "y");
 	JSValue z = JS_GetPropertyStr (ctx, source, "z");
 	JSValue w = JS_GetPropertyStr (ctx, source, "w");
+	const ScopeGuard releaseProperties ([&] {
+	    JS_FreeValue (ctx, x); JS_FreeValue (ctx, y);
+	    JS_FreeValue (ctx, z); JS_FreeValue (ctx, w);
+	});
 
 	if (!JS_IsNumber (x) || !JS_IsNumber (y)) {
 	    throw std::runtime_error ("Unsupported type conversion for VectorAdapter");
@@ -190,7 +196,12 @@ JSValue vector_property_get (JSContext* ctx, JSValueConst obj_val, JSAtom atom, 
 	}
     }
 
-    return JS_EXCEPTION;
+    // Exotic getters must perform prototype lookup themselves in QuickJS.
+    JSValue prototype = JS_GetPrototype (ctx, obj_val);
+    if (JS_IsException (prototype)) return JS_EXCEPTION;
+    JSValue member = JS_GetProperty (ctx, prototype, atom);
+    JS_FreeValue (ctx, prototype);
+    return member;
 }
 
 template JSValue vector_property_get<2> (JSContext* ctx, JSValueConst obj_val, JSAtom atom, JSValueConst receiver);
@@ -370,10 +381,6 @@ template JSValue vector_length<4> (JSContext* ctx, JSValueConst this_val, int ar
 
 template <int components>
 JSValue vector_constructor (JSContext* ctx, JSValueConst new_target, int argc, JSValueConst* argv, int magic) {
-    if (argc == 0) {
-	return JS_EXCEPTION;
-    }
-
     auto it = vectorAdapterInstances<components>.find (magic);
 
     if (it == vectorAdapterInstances<components>.end ()) {
@@ -386,7 +393,37 @@ JSValue vector_constructor (JSContext* ctx, JSValueConst new_target, int argc, J
 
     VEC_MAGIC_CHECK_EXCEPTION (container, components);
 
-    container->value.update (vector_get<components> (ctx, argv[0]), DynamicValue::UpdateSource::Initialization);
+    try {
+	auto value = vector_new<components> ();
+	if (argc == 1 && !JS_IsString (argv[0])) {
+	    value = vector_get<components> (ctx, argv[0]);
+	} else if (argc == 1) {
+	    const char* source = JS_ToCString (ctx, argv[0]);
+	    if (!source) { JS_FreeValue (ctx, result); return JS_EXCEPTION; }
+	    std::istringstream input (source);
+	    JS_FreeCString (ctx, source);
+	    input.imbue (std::locale::classic ());
+	    for (int i = 0; i < components; ++i) {
+		if (!(input >> value[i])) throw std::runtime_error ("Vector string requires numeric components");
+	    }
+	} else if (argc == components || (components == 3 && argc == 2)) {
+	    for (int i = 0; i < argc; ++i) {
+		double number = 0;
+		if (!JS_IsNumber (argv[i]) || JS_ToFloat64 (ctx, &number, argv[i]) < 0
+		    || !std::isfinite (number) || std::abs (number) > std::numeric_limits<float>::max ())
+		    throw std::runtime_error ("Vector components must be finite numbers");
+		value[i] = static_cast<float> (number);
+	    }
+	} else if (argc != 0) {
+	    throw std::runtime_error ("Invalid number of vector components");
+	}
+	for (int i = 0; i < components; ++i)
+	    if (!std::isfinite (value[i])) throw std::runtime_error ("Vector components must be finite numbers");
+	container->value.update (value, DynamicValue::UpdateSource::Initialization);
+    } catch (const std::exception& error) {
+	JS_FreeValue (ctx, result);
+	return JS_ThrowTypeError (ctx, "%s", error.what ());
+    }
 
     return result;
 }
@@ -403,11 +440,8 @@ template <int components> void vector_finalizer (JSRuntime* rt, JSValueConst val
 	return;
     }
 
-    // free container and the associated DynamicValue if temporal
-    if (container->id != InvalidVectorInstanceId) {
-	container->adapter.free (container->id);
-    }
-
+    // JS globals can outlive the adapter during context teardown. Temporary
+    // vectors own their value here so finalization never calls a dead adapter.
     delete container;
 }
 
@@ -466,8 +500,8 @@ template JSValue vector_add<4> (JSContext* ctx, JSValueConst this_val, int argc,
 
 template <int components>
 JSValue vector_subtract (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    if (argc != 1) {
-	return JS_UNDEFINED;
+    if (argc == 0) {
+	return JS_ThrowTypeError (ctx, "Vector subtraction requires an argument");
     }
 
     JSClassID classId = 0;
@@ -480,10 +514,15 @@ JSValue vector_subtract (JSContext* ctx, JSValueConst this_val, int argc, JSValu
 
     VEC_MAGIC_CHECK_EXCEPTION (newContainer, components);
 
-    newContainer->value.update (
-	vector_get<components> (ctx, argv[0]) - vector_get<components> (container->value),
-	DynamicValue::UpdateSource::Initialization
-    );
+    try {
+	newContainer->value.update (
+	    vector_get<components> (container->value) - vector_get<components> (ctx, argv[0]),
+	    DynamicValue::UpdateSource::Initialization
+	);
+    } catch (const std::exception& error) {
+	JS_FreeValue (ctx, newVector);
+	return JS_ThrowTypeError (ctx, "%s", error.what ());
+    }
 
     return newVector;
 }
@@ -924,7 +963,8 @@ VectorAdapter<components>::VectorAdapter (ScriptEngine& engine) :
     );
 
     JS_SetClassProto (this->m_engine.getContext (), this->m_classId, m_prototype);
-    JS_FreeValue (this->m_engine.getContext (), ctor);
+    JS_DefinePropertyValueStr (this->m_engine.getContext (), this->m_engine.getGlobalThis (),
+        this->m_name.c_str (), ctor, JS_PROP_ENUMERABLE);
 }
 
 template <int components> VectorAdapter<components>::~VectorAdapter () {
@@ -945,7 +985,7 @@ template <int components> JSValue VectorAdapter<components>::instantiate (Dynami
 	    .magic = VEC_OPAQUE_MAGIC + components,
 	    .adapter = *this,
 	    .value = value,
-	    .id = InvalidVectorInstanceId,
+	    .ownedValue = nullptr,
 	}
     );
 
@@ -954,7 +994,6 @@ template <int components> JSValue VectorAdapter<components>::instantiate (Dynami
 
 template <int components> JSValue VectorAdapter<components>::instantiate (DynamicValue& source, bool temporal) {
     auto value = std::make_unique<DynamicValue> (source);
-    uint32_t id = ++VectorInstanceId;
     JSValue result = this->ObjectAdapter::instantiate (*value);
     JS_SetOpaque (
 	result,
@@ -962,18 +1001,15 @@ template <int components> JSValue VectorAdapter<components>::instantiate (Dynami
 	    .magic = VEC_OPAQUE_MAGIC + components,
 	    .adapter = *this,
 	    .value = *value,
-	    .id = id,
+	    .ownedValue = std::move (value),
 	}
     );
-
-    this->m_values.emplace (id, std::move (value));
 
     return result;
 }
 
 template <int components> JSValue VectorAdapter<components>::instantiate () {
     auto value = std::make_unique<DynamicValue> (vector_new<components> ());
-    uint32_t id = ++VectorInstanceId;
     JSValue result = this->ObjectAdapter::instantiate (*value);
     JS_SetOpaque (
 	result,
@@ -981,21 +1017,11 @@ template <int components> JSValue VectorAdapter<components>::instantiate () {
 	    .magic = VEC_OPAQUE_MAGIC + components,
 	    .adapter = *this,
 	    .value = *value,
-	    .id = id,
+	    .ownedValue = std::move (value),
 	}
     );
 
-    this->m_values.emplace (id, std::move (value));
-
     return result;
-}
-
-template <int components> void VectorAdapter<components>::free (uint32_t vectorId) {
-    auto it = this->m_values.find (vectorId);
-
-    if (it != this->m_values.end ()) {
-	this->m_values.erase (it);
-    }
 }
 
 namespace WallpaperEngine::Scripting::Adapters {

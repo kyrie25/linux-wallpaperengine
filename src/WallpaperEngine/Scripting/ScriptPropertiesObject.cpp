@@ -14,6 +14,7 @@ std::map<uint32_t, ScriptPropertiesObject&> scriptPropertiesObjectInstances;
 struct OpaqueScriptPropertiesInstance {
     ScriptPropertiesObject& object;
     DynamicValue& value;
+    JSValue defaults;
 };
 
 struct OpaqueScriptProperties {
@@ -38,7 +39,7 @@ JSValue scriptproperties_property_get (JSContext* ctx, JSValueConst obj_val, JSA
 	const auto it = properties.find (name);
 
 	if (it == properties.end ()) {
-	    return JS_UNDEFINED;
+	    return JS_GetProperty (ctx, container->defaults, atom);
 	}
 
 	return container->object.getEngine ().dynamicToJs (*it->second->value);
@@ -55,9 +56,18 @@ int scriptproperties_property_set (
 }
 
 JSValue scriptpropertiescreator_add (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    // no need to do anything, any add call should just return itself
-    // we'll set them either way as what comes in the DynamicValue
-    // TODO: PROPERLY IMPLEMENT THIS CHAIN AT SOME POINT
+    if (argc > 0 && JS_IsObject (argv[0])) {
+        JSValue defaults = JS_GetPropertyStr (ctx, this_val, "__defaults");
+        JSValue name = JS_GetPropertyStr (ctx, argv[0], "name");
+        JSValue value = JS_GetPropertyStr (ctx, argv[0], "value");
+        JSAtom atom = JS_ValueToAtom (ctx, name);
+        if (atom != JS_ATOM_NULL) {
+            JS_SetProperty (ctx, defaults, atom, value);
+            JS_FreeAtom (ctx, atom);
+        } else JS_FreeValue (ctx, value);
+        JS_FreeValue (ctx, name);
+        JS_FreeValue (ctx, defaults);
+    }
     return JS_DupValue (ctx, this_val);
 }
 
@@ -77,7 +87,8 @@ JSValue scriptpropertiescreator_finish (JSContext* ctx, JSValueConst this_val, i
     JS_SetOpaque (
 	result,
 	new OpaqueScriptPropertiesInstance { .object = container->object,
-					     .value = container->object.getEngine ().getRunningModule ()->value }
+					     .value = container->object.getEngine ().getRunningModule ()->value,
+                                             .defaults = JS_GetPropertyStr (ctx, this_val, "__defaults") }
     );
 
     return result;
@@ -92,7 +103,15 @@ void scriptpropertiescreator_finalizer (JSRuntime* rt, JSValueConst val) {
 void scriptproperties_finalizer (JSRuntime* rt, JSValueConst val) {
     JSClassID classId = 0;
 
-    delete static_cast<OpaqueScriptPropertiesInstance*> (JS_GetAnyOpaque (val, &classId));
+    auto* container = static_cast<OpaqueScriptPropertiesInstance*> (JS_GetAnyOpaque (val, &classId));
+    if (container) JS_FreeValueRT (rt, container->defaults);
+    delete container;
+}
+
+static void scriptproperties_mark (JSRuntime* rt, JSValueConst val, JS_MarkFunc* mark) {
+    JSClassID classId = 0;
+    auto* container = static_cast<OpaqueScriptPropertiesInstance*> (JS_GetAnyOpaque (val, &classId));
+    if (container) JS_MarkValue (rt, container->defaults, mark);
 }
 
 JSValue
@@ -107,6 +126,7 @@ scriptpropertiescreator_create (JSContext* ctx, JSValueConst this_val, int argc,
 
     // setup the current script properties creator
     JS_SetOpaque (creator, new OpaqueScriptProperties { .object = instance->second });
+    JS_SetPropertyStr (ctx, creator, "__defaults", JS_NewObject (ctx));
 
     return creator;
 }
@@ -131,6 +151,7 @@ ScriptPropertiesObject::ScriptPropertiesObject (ScriptEngine& engine, Render::Wa
     this->m_propertiesDefinition = {
 	.class_name = "IScriptProperties",
 	.finalizer = scriptproperties_finalizer,
+	.gc_mark = scriptproperties_mark,
 	.exotic = &this->m_exoticMethods,
     };
     JS_NewClassID (this->m_engine.getRuntime (), &this->m_propertiesClassId);
@@ -181,6 +202,7 @@ ScriptPropertiesObject::ScriptPropertiesObject (ScriptEngine& engine, Render::Wa
 }
 
 ScriptPropertiesObject::~ScriptPropertiesObject () {
+    scriptPropertiesObjectInstances.erase (m_instanceId);
     JS_FreeValue (this->m_engine.getContext (), this->m_creatorPrototype);
     JS_FreeValue (this->m_engine.getContext (), this->m_propertiesPrototype);
 }

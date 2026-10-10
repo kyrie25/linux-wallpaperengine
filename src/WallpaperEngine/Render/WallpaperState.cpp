@@ -11,7 +11,7 @@ WallpaperState::WallpaperState (const TextureUVsScaling& textureUVsMode, const u
 bool WallpaperState::hasChanged (
     const glm::ivec4& viewport, const bool& vflip, const int& projectionWidth, const int& projectionHeight
 ) const {
-    return this->m_viewport.width != viewport.z || this->m_viewport.height != viewport.w
+    return this->m_dirty || this->m_viewport.width != viewport.z || this->m_viewport.height != viewport.w
 	|| this->m_projection.width != projectionWidth || this->m_projection.height != projectionHeight
 	|| this->m_vflip != vflip;
 }
@@ -135,10 +135,14 @@ WallpaperState::TextureUVsScaling WallpaperState::getTextureUVsScaling () const 
 uint32_t WallpaperState::getClampingMode () const { return this->m_clampingMode; }
 
 void WallpaperState::setTextureUVsStrategy (WallpaperState::TextureUVsScaling strategy) {
+    if (this->m_textureUVsMode != strategy) this->m_dirty = true;
     this->m_textureUVsMode = strategy;
 }
 
-void WallpaperState::setAlignment (const glm::vec2& alignment) { this->m_alignment = alignment; }
+void WallpaperState::setAlignment (const glm::vec2& alignment) {
+    if (this->m_alignment != alignment) this->m_dirty = true;
+    this->m_alignment = alignment;
+}
 
 int WallpaperState::getViewportWidth () const { return this->m_viewport.width; }
 
@@ -151,6 +155,7 @@ int WallpaperState::getProjectionHeight () const { return this->m_projection.hei
 void WallpaperState::updateState (
     const glm::ivec4& viewport, const bool& vflip, const int& projectionWidth, const int& projectionHeight
 ) {
+    this->m_dirty = false;
     this->m_viewport.width = viewport.z;
     this->m_viewport.height = viewport.w;
     this->m_vflip = vflip;

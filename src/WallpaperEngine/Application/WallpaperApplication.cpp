@@ -1,4 +1,8 @@
 #include "WallpaperApplication.h"
+#include "LiveControl.h"
+#include "WallpaperEngine/Render/Wallpapers/CWeb.h"
+#include "WallpaperEngine/Render/Wallpapers/CVideo.h"
+#include <fstream>
 
 #include "Steam/FileSystem/FileSystem.h"
 #include "WallpaperEngine/Application/ApplicationState.h"
@@ -68,6 +72,53 @@ WallpaperApplication::WallpaperApplication (ApplicationContext& context) : m_con
     this->setupProperties ();
     this->setupBrowser ();
     this->initializePlaylists ();
+}
+
+WallpaperApplication::~WallpaperApplication () {
+    // Release GPU users while the driver and its EGL context still exist.
+    if (m_videoDriver) makeAnyViewportCurrent ();
+    m_renderContext.reset ();
+    m_browserContext.reset ();
+    m_audioContext.reset ();
+    m_audioDriver.reset ();
+    m_audioRecorder.reset ();
+    m_fullScreenDetector.reset ();
+    m_videoDriver.reset ();
+    SDL_Quit ();
+}
+
+void WallpaperApplication::updateLiveControl () {
+    const auto& path = m_context.settings.general.controlFile;
+    const auto now = std::chrono::steady_clock::now ();
+    if (path.empty () || now < m_nextControlPoll) return;
+    m_nextControlPoll = now + std::chrono::milliseconds (250);
+    std::error_code error;
+    const auto modified = std::filesystem::last_write_time (path, error);
+    if (error || m_controlModified == modified) return;
+    m_controlModified = modified;
+    try {
+        std::ifstream file (path);
+        const auto control = LiveControl::parse (WallpaperEngine::Data::JSON::JSON::parse (file));
+        if (control.fps) m_context.settings.render.maximumFPS = *control.fps;
+        if (control.volume) {
+            m_context.settings.audio.volume = *control.volume;
+            SDL_LockMutex (m_audioDriver->getStreamMutex ());
+            m_context.state.audio.volume = *control.volume;
+            SDL_UnlockMutex (m_audioDriver->getStreamMutex ());
+        }
+        for (const auto& wallpaper : m_renderContext->getWallpapers () | std::views::values) {
+            if (control.scaling) wallpaper->setScaling (*control.scaling);
+            if (control.alignment) wallpaper->setAlignment (*control.alignment);
+            if (auto* web = dynamic_cast<WallpaperEngine::Render::Wallpapers::CWeb*> (wallpaper.get ())) {
+                if (control.fps) web->setFrameRate (*control.fps);
+                if (control.volume) web->setVolume (*control.volume);
+            }
+            if (auto* video = dynamic_cast<WallpaperEngine::Render::Wallpapers::CVideo*> (wallpaper.get ()))
+                if (control.volume) video->setVolume (*control.volume);
+        }
+    } catch (const std::exception& exception) {
+        sLog.error ("Ignoring invalid live control: ", exception.what ());
+    }
 }
 
 void WallpaperApplication::initializeSubsystems () {
@@ -225,7 +276,7 @@ void WallpaperApplication::loadBackgrounds () {
 
 ProjectUniquePtr WallpaperApplication::loadBackground (const std::string& bg) {
     auto container = this->setupAssetLocator (bg);
-    auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
+    auto json = WallpaperEngine::Data::JSON::parseAuthoringJson (container->readString ("project.json"), "project.json");
 
     // when a background is loaded, reset the screenshot variables
     // this allows taking screenshots after a background changes
@@ -348,7 +399,7 @@ bool WallpaperApplication::preflightWallpaper (const std::string& path) {
     try {
 	// avoid mutating state, just ensure project.json parses
 	auto container = this->setupAssetLocator (path);
-	const auto json = WallpaperEngine::Data::JSON::JSON::parse (container->readString ("project.json"));
+	const auto json = WallpaperEngine::Data::JSON::parseAuthoringJson (container->readString ("project.json"), "project.json");
 	if (!json.contains ("type") || !json.contains ("file")) {
 	    sLog.error ("Preflight failed for ", path, ": missing required fields");
 	    return false;
@@ -861,6 +912,7 @@ void WallpaperApplication::setup () {
 }
 
 void WallpaperApplication::render () {
+    this->updateLiveControl ();
     static time_t seconds;
     static struct tm* timeinfo;
 
@@ -966,7 +1018,6 @@ void WallpaperApplication::cleanup () {
     close_encoder ();
 #endif /* DEMOMODE */
 
-    SDL_Quit ();
 }
 
 void WallpaperApplication::show () {

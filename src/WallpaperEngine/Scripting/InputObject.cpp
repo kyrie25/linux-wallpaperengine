@@ -10,26 +10,30 @@ JSValue get_cursor_world_position (JSContext* ctx, JSValueConst this_val, int ar
     JSClassID classId;
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
 
-    // TODO: PROPERLY IMPLEMENT THIS
-    return input->getScene ().getScriptEngine ().getAdapters ().vec3->instantiate ();
+    const auto& scene = input->getScene ();
+    const auto position = scene.getMouseWorldPosition ();
+    DynamicValue world (position.value_or (glm::vec3 (0)));
+    return scene.getScriptEngine ().dynamicToJs (world, true);
 }
 
 JSValue get_cursor_screen_position (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
     JSClassID classId;
     auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
-    auto position = input->getScene ().getMousePositionNormalized ();
+    const auto& position = input->getScene ().getMouseScreenPosition ();
 
     JSValue result = input->getScene ().getScriptEngine ().getAdapters ().vec2->instantiate ();
 
-    JS_SetPropertyStr (ctx, result, "x", JS_NewFloat64 (ctx, position->x));
-    JS_SetPropertyStr (ctx, result, "y", JS_NewFloat64 (ctx, position->y));
+    JS_SetPropertyStr (ctx, result, "x", JS_NewFloat64 (ctx, position.x));
+    JS_SetPropertyStr (ctx, result, "y", JS_NewFloat64 (ctx, position.y));
 
     return result;
 }
 
 JSValue get_cursor_left_down (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) {
-    // TODO: IMPLEMENT THIS
-    return JS_NewBool (ctx, false);
+    JSClassID classId = 0;
+    auto* input = static_cast<InputObject*> (JS_GetAnyOpaque (this_val, &classId));
+    return JS_NewBool (ctx, input->getScene ().getContext ().getInputContext ().getMouseInput ().leftClick ()
+        == WallpaperEngine::Input::MouseClickStatus::Clicked);
 }
 
 JSValue input_set_value (JSContext* ctx, JSValueConst this_val, int argc, JSValueConst* argv) { return JS_EXCEPTION; }

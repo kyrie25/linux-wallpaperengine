@@ -1,13 +1,10 @@
 globalThis.__intervals = Object.create(null);
-globalThis.localStorage = globalThis.localStorage || {
-  __data: Object.create(null),
-  get(key) {
-    key = String(key);
-    return Object.prototype.hasOwnProperty.call(this.__data, key) ? this.__data[key] : null;
-  },
-  set(key, value) { this.__data[String(key)] = String(value); },
-  remove(key) { delete this.__data[String(key)]; },
-  clear() { this.__data = Object.create(null); }
+globalThis.Mat4 = class Mat4 {
+  constructor(value) {
+    this.m = new Float32Array(value ? (value.m || value) : [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+    if (this.m.length !== 16) throw new TypeError('Mat4 requires 16 elements');
+  }
+  copy() { return new Mat4(this); }
 };
 globalThis.MediaPlaybackEvent = globalThis.MediaPlaybackEvent || {
   PLAYBACK_STOPPED: 0,

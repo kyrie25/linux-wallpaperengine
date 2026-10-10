@@ -5,6 +5,7 @@
 #include "EngineObject.h"
 #include "InputObject.h"
 #include "Modules/ScriptModule.h"
+#include "Modules/ScriptModuleAssets.h"
 #include "SceneObject.h"
 
 #include <chrono>
@@ -33,20 +34,22 @@ class CScene;
 
 namespace WallpaperEngine::Scripting {
 class ScriptPropertiesObject;
+class LocalStorageObject;
+class PuppetScriptObject;
+class TextureAnimationObject;
 namespace Adapters {
     class ScriptableObjectAdapter;
 }
 using namespace WallpaperEngine::Data::Model;
-
-// Opaque handle returned by createLayerScript. 0 means invalid / not created.
-using ScriptLayerHandle = int;
-static constexpr ScriptLayerHandle kInvalidLayerHandle = 0;
 
 class ScriptEngine {
 public:
     struct LoadedModule {
 	DynamicValue& value;
 	JSValue module;
+	ScriptableObject& object;
+	bool initialized = false;
+        std::string key;
     };
     struct JSObjectAdapters {
 	std::unique_ptr<Adapters::VectorAdapter<4>> vec4;
@@ -62,9 +65,18 @@ public:
 
     JSRuntime* getRuntime () const { return m_runtime; }
     JSContext* getContext () const { return m_context; }
+    JSModuleDef* loadAssetModule (JSContext* context, const char* name) const;
     JSValue getGlobalThis () const { return m_globalThis; }
     LoadedModule* getRunningModule () const { return m_runningModule; }
-    JSValue dynamicToJs (DynamicValue& value) const;
+    JSValue dynamicToJs (DynamicValue& value, bool snapshot = false, bool angle = false) const;
+    void updateValue (JSValue value, DynamicValue& target, bool angle = false,
+                      DynamicValue::UnderlyingType type = DynamicValue::Null) const;
+    void shutdownScripts ();
+    void removeScript (const std::string& key);
+    void callLayerCallback (ScriptableObject& layer, JSValueConst callback, JSValueConst receiver);
+    PuppetScriptObject& getPuppetScripts () const { return *m_puppetScripts; }
+    SceneObject& getSceneObject () const { return *m_sceneObject; }
+    TextureAnimationObject& getTextureAnimations () const { return *m_textureAnimations; }
 
     /**
      * Evaluate a WallpaperEngine script's update() function.
@@ -73,66 +85,20 @@ public:
      * @param currentValue The current value to pass to update()
      * @return The modified value from update(), or a copy of currentValue on error
      */
-    void queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object);
+    void queueScript (const std::string& key, DynamicValue& currentValue, ScriptableObject& object,
+                      JSValueConst owner = JS_UNDEFINED, DynamicValue::UnderlyingType type = DynamicValue::Null);
+    void unregisterObject (ScriptableObject& object);
+    void dispatchCursorEvent (const ScriptableObject& object, const char* event, const glm::vec3& world, const glm::vec3& local);
+    void destroyObjectModules (ScriptableObject& object);
+    size_t nextQueueOrder () const { return m_dispatchOrder.size (); }
+    std::unordered_set<std::string> initializeModules (size_t first = 0);
+    bool isEvaluatingModuleTopLevel () const { return m_evaluatingModuleTopLevel; }
 
     /**
      * Runs a frame tick in the javascript engine. Dispatches any pending events,
      * timeouts, intervals AND calls any update() functions.
      */
     void tick ();
-
-    // -------------------------------------------------------------------
-    // Layer-script API (Phase 2 — dynamic text)
-    // -------------------------------------------------------------------
-    //
-    // Wallpaper Engine text-object scripts follow a lifecycle pattern that
-    // cannot be evaluated with the simple `update(value) -> value` contract
-    // above. They typically look like:
-    //
-    //   'use strict';
-    //   export var scriptProperties = createScriptProperties()…finish();
-    //   export function init()   { /* subscribe to events, cache data    */ }
-    //   export function update() { thisLayer.text = computeCurrentText(); }
-    //
-    // The script mutates a `thisLayer` object in place instead of returning
-    // a value, and lifecycle functions are optional. The API below keeps
-    // per-layer state alive across frames so `init()` runs once and
-    // `update()` re-runs every tick.
-
-    /**
-     * Create a persistent "layer script" from a WE text-object script.
-     *
-     * @param scriptSource The full JS script text.
-     * @param initialScriptProps Initial values for scriptProperties entries.
-     *        Ownership stays with the caller; we only snapshot current values.
-     * @param initialText Initial value of `thisLayer.text` (usually the
-     *        static placeholder carried in the JSON).
-     * @return A positive handle, or kInvalidLayerHandle if evaluation failed.
-     */
-    ScriptLayerHandle createLayerScript (
-	const std::string& scriptSource, std::map<std::string, UserSettingUniquePtr>& initialScriptProps,
-	const std::string& initialText
-    );
-
-    /**
-     * Advance a layer by one frame.
-     *
-     * On the first call, invokes `init()` (if defined) before `update()`.
-     * Updates a `thisScene` context visible to the script (time, fps).
-     * Silently no-ops if the handle is invalid.
-     */
-    void tickLayer (ScriptLayerHandle handle, double time, double deltaTime, double fps);
-
-    /**
-     * Read the current value of `thisLayer.text` for the given layer.
-     * Returns an empty string if the handle is invalid.
-     */
-    std::string layerText (ScriptLayerHandle handle);
-
-    /**
-     * Tear down a layer: invokes `destroy()` (if defined) and frees state.
-     */
-    void destroyLayer (ScriptLayerHandle handle);
 
     const JSObjectAdapters& getAdapters () const { return m_adapters; }
     const Render::Wallpapers::CScene& getScene () const { return m_scene; }
@@ -143,10 +109,11 @@ private:
 
     void installBuiltins ();
 
-    void notifyMediaUpdate (const Media::MediaSource::MediaInfo& media);
+    void notifyMediaUpdate (const Media::MediaSource::MediaInfo& media,
+                            const std::unordered_set<std::string>* initialized = nullptr);
 
-    // Installs globalThis.__layers and related helpers. Called lazily.
-    void ensureLayerRegistry ();
+    void loadScript (const std::string& key, DynamicValue& value, ScriptableObject& object);
+    JSValue callOwned (LoadedModule& module, int argc, JSValueConst argv[], const char* name);
 
     JSRuntime* m_runtime = nullptr;
     JSContext* m_context = nullptr;
@@ -157,16 +124,26 @@ private:
     std::unique_ptr<SceneObject> m_sceneObject;
     std::unique_ptr<ConsoleObject> m_consoleObject;
     std::unique_ptr<ScriptPropertiesObject> m_scriptPropertiesObject;
+    std::unique_ptr<LocalStorageObject> m_localStorageObject;
+    std::unique_ptr<PuppetScriptObject> m_puppetScripts;
+    std::unique_ptr<TextureAnimationObject> m_textureAnimations;
 
+    std::unique_ptr<Modules::ScriptModuleAssets> m_assetModules;
+    bool m_userPropertiesDirty = true;
+    std::vector<std::function<void ()>> m_propertyListeners;
     std::map<std::string, std::unique_ptr<Modules::ScriptModule>> m_modules = {};
     std::map<std::string, LoadedModule> m_scriptModules = {};
 
+    struct PendingModule { DynamicValue* value; ScriptableObject* object; };
+    std::map<std::string, PendingModule> m_pendingModules;
+    std::vector<std::string> m_dispatchOrder;
+    std::map<std::string, JSValue> m_scriptOwners;
+    std::map<std::string, DynamicValue::UnderlyingType> m_scriptTypes;
     LoadedModule* m_runningModule = nullptr;
+    std::unordered_set<std::string> m_pendingInitialNotifications;
 
-    ScriptLayerHandle m_nextLayerId = 1;
-    bool m_layerRegistryReady = false;
-    std::map<ScriptLayerHandle, bool> m_layerInitialized;
     bool m_builtinsInstalled = false;
+    bool m_evaluatingModuleTopLevel = false;
     Media::MediaSource& m_mediaSource;
     std::function<void ()> m_unregisterMediaUpdateCallback;
     std::function<void ()> m_unregisterAlbumArtUpdateCallback;

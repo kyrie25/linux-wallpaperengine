@@ -8,6 +8,7 @@ using namespace WallpaperEngine::Render::Objects;
 
 CSound::CSound (Wallpapers::CScene& scene, const Sound& sound) :
     CObject (scene, sound), ScriptableObject (scene, sound), m_sound (sound) {
+    this->registerProperty ("volume", *m_sound.volume->value, DynamicValue::Float);
     if (this->getContext ().getApp ().getContext ().settings.audio.enabled) {
 	this->load ();
     }
@@ -36,12 +37,7 @@ void CSound::load () {
     }
 }
 
-void CSound::render () {
-    if (!m_scriptInitialized) {
-	m_scriptInitialized = true;
-	this->registerProperty ("volume", *m_sound.volume->value);
-    }
-}
+void CSound::render () { }
 
 void CSound::play () {
     for (const auto& stream : this->m_audioStreams) {
