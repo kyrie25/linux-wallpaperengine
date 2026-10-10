@@ -222,6 +222,10 @@ void GLPlayer::init () {
     mpv_set_option_string (this->m_handle, "vo", "libmpv");
     mpv_set_option_string (this->m_handle, "profile", "fast");
     mpv_set_option_string (this->m_handle, "untimed", this->m_untimed ? "yes" : "no");
+    if (this->m_stream.has_value ()) {
+	// Keep embedded clips on their own clock without blocking the scene until the next video frame.
+	mpv_set_option_string (this->m_handle, "video-timing-offset", "0");
+    }
 
     if (mpv_initialize (this->m_handle) < 0) {
 	sLog.exception ("Could not initialize mpv context");
