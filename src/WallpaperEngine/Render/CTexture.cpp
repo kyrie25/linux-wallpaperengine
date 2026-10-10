@@ -1,4 +1,5 @@
 #include "CTexture.h"
+#include "ScopedPixelUnpack.h"
 #include "WallpaperEngine/Logging/Log.h"
 
 #include <lz4.h>
@@ -9,6 +10,8 @@
 #include <stb_image.h>
 
 using namespace WallpaperEngine::Render;
+extern float g_Time;
+extern float g_TimeLast;
 
 CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
     Helpers::ContextAware (context), m_header (std::move (header)) {
@@ -47,6 +50,22 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
     // ask opengl for the correct amount of textures and framebuffers
     glGenTextures (this->m_header->imageCount, this->m_textureID);
 
+    if (this->m_header->isAnimatedGif) {
+	const auto& mipmap = this->m_header->images.at (0).front ();
+	m_gif = GifAnimation::open (mipmap->uncompressedData.get (), mipmap->uncompressedSize);
+	if (m_gif && m_gif->advance (0.0f)) {
+	    const TightPixelTransfer transfer;
+	    this->setupOpenGLParameters (0);
+	    glTexImage2D (
+		GL_TEXTURE_2D, 0, GL_RGBA8, m_gif->width (), m_gif->height (), 0, GL_RGBA, GL_UNSIGNED_BYTE,
+		m_gif->pixels ()
+	    );
+	    m_gifTime = g_Time;
+	    return;
+	}
+	m_gif.reset ();
+    }
+
     for (const auto& [index, mipmaps] : this->m_header->images) {
 	this->setupOpenGLParameters (index);
 
@@ -61,12 +80,16 @@ CTexture::CTexture (RenderContext& context, TextureUniquePtr header) :
 	    GLenum textureFormat = GL_RGBA;
 
 	    if (this->m_header->freeImageFormat != FIF_UNKNOWN) {
-		int fileChannels;
-
+		// Packed textures already have authored dimensions and UVs; EXIF
+		// orientation applies only to external images in TextureCache.
+		int channels = 0;
 		dataptr = handle = stbi_load_from_memory (
-		    reinterpret_cast<unsigned char*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize,
-		    &width, &height, &fileChannels, 4
+		    reinterpret_cast<const stbi_uc*> (mipmap->uncompressedData.get ()), mipmap->uncompressedSize,
+		    &width, &height, &channels, 4
 		);
+		if (!handle) {
+		    sLog.exception ("Cannot decode encoded texture image");
+		}
 	    } else {
 		if (this->m_header->format == TextureFormat_R8) {
 		    // red textures are 1-byte-per-pixel, so it's alignment has to be set manually
@@ -261,6 +284,16 @@ void CTexture::decrementUsageCount () const {
 void CTexture::update () const {
     if (this->m_player) {
 	this->m_player->render ();
+    }
+    if (m_gif && m_gifTime != g_Time) {
+	m_gifTime = g_Time;
+	if (m_gif->advance (std::max (g_Time - g_TimeLast, 0.0f))) {
+	    const TightPixelTransfer transfer;
+	    glBindTexture (GL_TEXTURE_2D, m_textureID[0]);
+	    glTexSubImage2D (
+		GL_TEXTURE_2D, 0, 0, 0, m_gif->width (), m_gif->height (), GL_RGBA, GL_UNSIGNED_BYTE, m_gif->pixels ()
+	    );
+	}
     }
 }
 

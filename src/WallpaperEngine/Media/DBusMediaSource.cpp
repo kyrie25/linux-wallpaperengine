@@ -97,11 +97,16 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant, const char* sende
 	return;
     }
 
+    // MPRIS Metadata replaces the track map; omitted keys must not retain the previous track.
+    MediaInfo updated = this->m_mediaInfo;
+    updated.title.clear ();
+    updated.artist.clear ();
+    updated.album.clear ();
+    updated.url.reset ();
+    updated.duration = 0;
+
     DBusMessageIter dict;
     dbus_message_iter_recurse (&variant, &dict);
-
-    bool metadataUpdate = false;
-    bool albumUpdate = false;
 
     while (dbus_message_iter_get_arg_type (&dict) == DBUS_TYPE_DICT_ENTRY) {
 	DBusMessageIter entry;
@@ -122,9 +127,8 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant, const char* sende
 
 	    std::string titleStr = title ?: "";
 
-	    if (this->m_mediaInfo.title != titleStr) {
-		this->m_mediaInfo.title = titleStr;
-		metadataUpdate = true;
+	    if (updated.title != titleStr) {
+		updated.title = titleStr;
 	    }
 	} else if (keyStr == "xesam:artist") {
 	    DBusMessageIter arr;
@@ -137,9 +141,8 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant, const char* sende
 
 		std::string artistStr = artist ?: "";
 
-		if (this->m_mediaInfo.artist != artistStr) {
-		    this->m_mediaInfo.artist = artistStr;
-		    metadataUpdate = true;
+		if (updated.artist != artistStr) {
+		    updated.artist = artistStr;
 		}
 	    }
 	} else if (keyStr == "xesam:album") {
@@ -148,9 +151,8 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant, const char* sende
 
 	    std::string albumStr = album ?: "";
 
-	    if (this->m_mediaInfo.album != albumStr) {
-		this->m_mediaInfo.album = albumStr;
-		albumUpdate = true;
+	    if (updated.album != albumStr) {
+		updated.album = albumStr;
 	    }
 	} else if (keyStr == "mpris:artUrl") {
 	    const char* artUrl = nullptr;
@@ -158,29 +160,30 @@ void DBusMediaSource::parseMetadata (DBusMessageIter& variant, const char* sende
 
 	    std::string artUrlStr = artUrl ?: "";
 
-	    if (artUrlStr.empty () && this->m_mediaInfo.url.has_value ()) {
-		this->m_mediaInfo.url.reset ();
-		albumUpdate = true;
-	    } else if (this->m_mediaInfo.url.has_value () && artUrlStr != *this->m_mediaInfo.url) {
-		this->m_mediaInfo.url = artUrlStr;
-		albumUpdate = true;
-	    } else if (!this->m_mediaInfo.url.has_value ()) {
-		this->m_mediaInfo.url = artUrlStr;
-		albumUpdate = true;
+	    if (artUrlStr.empty () && updated.url.has_value ()) {
+		updated.url.reset ();
+	    } else if (updated.url.has_value () && artUrlStr != *updated.url) {
+		updated.url = artUrlStr;
+	    } else if (!artUrlStr.empty () && !updated.url.has_value ()) {
+		updated.url = artUrlStr;
 	    }
 	} else if (keyStr == "mpris:length") {
 	    int64_t length = 0;
 	    dbus_message_iter_get_basic (&value, &length);
 	    const double duration = std::floor (static_cast<double> (length) / kMicrosecondsPerSecond);
 
-	    if (this->m_mediaInfo.duration != duration) {
-		this->m_mediaInfo.duration = duration;
-		metadataUpdate = true;
+	    if (updated.duration != duration) {
+		updated.duration = duration;
 	    }
 	}
 
 	dbus_message_iter_next (&dict);
     }
+
+    const bool metadataUpdate = updated.title != this->m_mediaInfo.title || updated.artist != this->m_mediaInfo.artist
+        || updated.duration != this->m_mediaInfo.duration;
+    const bool albumUpdate = updated.album != this->m_mediaInfo.album || updated.url != this->m_mediaInfo.url;
+    this->m_mediaInfo = std::move (updated);
 
     sLog.debug (
 	"Player metadata received: title=", this->m_mediaInfo.title, ",artist=", this->m_mediaInfo.artist,

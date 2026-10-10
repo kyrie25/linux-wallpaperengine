@@ -6,6 +6,7 @@
 #include <curl/curl.h>
 
 #include "MediaCover.h"
+#include "WallpaperEngine/Media/MediaArtwork.h"
 
 #include "WallpaperEngine/Assets/AssetLoadException.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -68,7 +69,9 @@ ReadStreamSharedPtr MediaCoverAdapter::open (const std::filesystem::path& path) 
     std::string album = *source.getMediaInfo ().url;
 
     if (album.starts_with ("file://")) {
-	album = album.substr (7);
+	const auto local = WallpaperEngine::Media::localArtworkPath (album);
+	if (!local) throw std::filesystem::filesystem_error ("Invalid artwork file URI", album, std::error_code ());
+	album = local->string ();
     } else if (album.starts_with ("http://") || album.starts_with ("https://")) {
 	return downloadCover (album);
     } else {

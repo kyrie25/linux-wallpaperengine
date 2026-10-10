@@ -23,6 +23,7 @@ class TextureCache final : Helpers::ContextAware {
 public:
     explicit TextureCache (RenderContext& context);
     ~TextureCache () override;
+    void updateArtwork ();
 
     /**
      * Checks if the given texture was already loaded and returns it

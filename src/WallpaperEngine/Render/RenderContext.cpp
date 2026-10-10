@@ -16,6 +16,7 @@ RenderContext::RenderContext (
 
 void RenderContext::render (Drivers::Output::OutputViewport* viewport) {
     viewport->makeCurrent ();
+    this->m_textureCache->updateArtwork ();
 
 #if !NDEBUG
     const std::string str = "Rendering to output " + viewport->name;

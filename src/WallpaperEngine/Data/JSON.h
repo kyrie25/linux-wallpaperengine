@@ -6,6 +6,7 @@
 #include <glm/detail/type_vec1.hpp>
 #include <nlohmann/json.hpp>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -26,6 +27,12 @@ using JSON = nlohmann::basic_json<
     std::map, std::vector, std::string, bool, std::int64_t, std::uint64_t, double, std::allocator,
     nlohmann::adl_serializer, std::vector<std::uint8_t>, JsonExtensions>;
 
+JSON parseAuthoringJson (const std::string& content, const std::string& source);
+class JsonSyntaxError : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 /**
  * Small extensions class that is used as base class of nlohmann's implementation.
  *
@@ -45,7 +52,15 @@ public:
     }
     template <int length, typename type, glm::qualifier qualifier>
     [[nodiscard]] glm::vec<length, type, qualifier> get () const {
-	return VectorBuilder::parse<length, type, qualifier> (this->base ().get<std::string> ());
+	const auto& value = this->base ();
+        if (value.is_number ()) return glm::vec<length, type, qualifier> (value.template get<type> ());
+        if (value.is_array ()) {
+            if (value.size () != length) throw std::invalid_argument ("Invalid vector component count");
+            glm::vec<length, type, qualifier> result {};
+            for (int i = 0; i < length; i++) result[i] = value.at (i).template get<type> ();
+            return result;
+        }
+        return VectorBuilder::parse<length, type, qualifier> (value.template get<std::string> ());
     }
     [[nodiscard]] Model::Color get () const { return ColorBuilder::parse (this->base ().get<std::string> ()); }
     [[nodiscard]] base_type require (const std::string& key, const std::string& message) const {
@@ -87,7 +102,11 @@ public:
 	    return std::nullopt;
 	}
 
-	return *it;
+        try {
+            return static_cast<T> (*it);
+        } catch (const std::exception&) {
+            return std::nullopt;
+        }
     }
     template <typename T> [[nodiscard]] T optional (const std::string& key, T defaultValue) const noexcept {
 	auto base = this->base ();
@@ -97,7 +116,11 @@ public:
 	    return defaultValue;
 	}
 
-	return (*it);
+        try {
+            return (*it);
+        } catch (const std::exception&) {
+            return defaultValue;
+        }
     }
     [[nodiscard]] UserSettingUniquePtr user (const std::string& key, const Properties& properties) const;
     template <typename T>

@@ -38,6 +38,7 @@ find_package(FFMPEG REQUIRED)
 find_package(PulseAudio REQUIRED)
 find_package(Freetype REQUIRED)
 find_package(CURL REQUIRED)
+pkg_check_modules(WEBP REQUIRED IMPORTED_TARGET libwebp)
 
 set(ENABLE_OPT OFF)
 set(SPIRV_CROSS_FORCE_PIC ON)
@@ -356,6 +357,7 @@ set(COMMON_SOURCES
     src/WallpaperEngine/Input/Drivers/GLFWMouseInput.h
 
     src/WallpaperEngine/Media/MediaSource.h
+    src/WallpaperEngine/Media/MediaArtwork.cpp
     src/WallpaperEngine/Media/MediaSource.cpp
     src/WallpaperEngine/Media/DBusMediaSource.h
     src/WallpaperEngine/Media/DBusMediaSource.cpp
@@ -426,6 +428,8 @@ set(COMMON_SOURCES
     src/WallpaperEngine/Render/CObject.h
     src/WallpaperEngine/Render/CObject.cpp
     src/WallpaperEngine/Render/CTexture.cpp
+    src/WallpaperEngine/Render/GifAnimation.cpp
+    src/WallpaperEngine/Render/ImageDecoder.cpp
     src/WallpaperEngine/Render/CTexture.h
     src/WallpaperEngine/Render/AlbumTexture.h
     src/WallpaperEngine/Render/AlbumTexture.cpp
@@ -566,7 +570,14 @@ if(BUILD_TESTING)
         src/WallpaperEngine/Testing/Harnesses/RenderHarness.h
         src/WallpaperEngine/Testing/Cases/MouseCoordinates.cpp
         src/WallpaperEngine/Testing/Cases/ObjectParser.cpp
-        src/WallpaperEngine/Testing/Cases/PropertyParser.cpp)
+        src/WallpaperEngine/Testing/Cases/PropertyParser.cpp
+        src/WallpaperEngine/Testing/Cases/MediaArtwork.cpp
+        src/WallpaperEngine/Testing/Cases/AlbumArtworkUpload.cpp
+        src/WallpaperEngine/Testing/Cases/TextInputProperty.cpp
+        src/WallpaperEngine/Testing/Cases/JsonVectorParsing.cpp
+        src/WallpaperEngine/Testing/Cases/TextureParser.cpp
+        src/WallpaperEngine/Testing/Cases/AuthoringJson.cpp
+        src/WallpaperEngine/Testing/Cases/EncodedImages.cpp)
 endif()
 
 add_library(
@@ -592,6 +603,7 @@ target_link_libraries (linux-wallpaperengine-lib PUBLIC
     ${X11_LIBRARIES}
     ${DBUS_LIBRARIES}
     CURL::libcurl
+    PkgConfig::WEBP
     kissfft
     glslang
     spirv-cross-core
@@ -619,6 +631,7 @@ if (BUILD_TESTING)
         ${X11_LIBRARIES}
         ${DBUS_LIBRARIES}
         CURL::libcurl
+    PkgConfig::WEBP
         kissfft
         glslang
         spirv-cross-core

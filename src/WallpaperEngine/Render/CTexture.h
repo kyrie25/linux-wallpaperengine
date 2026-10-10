@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Helpers/ContextAware.h"
+#include "GifAnimation.h"
 #include "TextureProvider.h"
 #include "WallpaperEngine/Data/Assets/Texture.h"
 #include "WallpaperEngine/VideoPlayback/MPV/GLPlayer.h"
@@ -87,5 +88,7 @@ private:
     glm::vec4 m_resolution {};
     /** The video player in use */
     GLPlayerUniquePtr m_player;
+    std::unique_ptr<GifAnimation> m_gif;
+    mutable float m_gifTime = 0.0f;
 };
 } // namespace WallpaperEngine::Assets

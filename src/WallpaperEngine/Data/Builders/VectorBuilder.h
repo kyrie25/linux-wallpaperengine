@@ -4,6 +4,8 @@
 #include <glm/detail/qualifier.hpp>
 #include <glm/detail/type_vec1.hpp>
 #include <string>
+#include <sstream>
+#include <algorithm>
 
 #include "WallpaperEngine/Data/Utils/SFINAE.h"
 #include "WallpaperEngine/Logging/Log.h"
@@ -21,6 +23,16 @@ class VectorBuilder {
      * @return
      */
     template <typename type> static type convert (const char* str);
+    static std::string normalize (std::string str) {
+        std::replace (str.begin (), str.end (), ',', ' ');
+        std::istringstream input (str);
+        std::string result, token;
+        while (input >> token) {
+            if (!result.empty ()) result += ' ';
+            result += token;
+        }
+        return result;
+    }
 
 public:
     /**
@@ -32,7 +44,8 @@ public:
      * @return
      */
     static int preparseSize (const std::string& str) {
-	const char* p = str.c_str ();
+	const auto normalized = normalize (str);
+	const char* p = normalized.c_str ();
 	const char* first = strchr (p, ' ');
 	const char* second = first ? strchr (first + 1, ' ') : nullptr;
 	const char* third = second ? strchr (second + 1, ' ') : nullptr;
@@ -70,7 +83,8 @@ public:
 	// ensure a valid type is used, only 1 to 4 vectors are supported
 	static_assert (length >= 1 && length <= 4, "Invalid vector length");
 
-	const char* p = str.c_str ();
+	const auto normalized = normalize (str);
+	const char* p = normalized.c_str ();
 
 	// get up to 4 spaces
 	const char* first = strchr (p, ' ');

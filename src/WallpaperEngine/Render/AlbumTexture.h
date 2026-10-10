@@ -1,10 +1,14 @@
 #pragma once
 
 #include "Helpers/ContextAware.h"
+#include <chrono>
 #include "TextureProvider.h"
 #include "WallpaperEngine/Media/MediaSource.h"
+#include "WallpaperEngine/Media/MediaArtwork.h"
 
 namespace WallpaperEngine::Render {
+void uploadAlbumArtworkTexture (GLuint texture, const Media::MediaArtwork* artwork);
+
 class AlbumTexture : public TextureProvider, public Helpers::ContextAware {
 public:
     explicit AlbumTexture (RenderContext& context);
@@ -29,11 +33,15 @@ public:
     void decrementUsageCount () const override;
     void update () const override;
 
-    void copyContents (const TextureProvider& other) const noexcept;
+    void refresh (const AlbumTexture& previous) const;
+    void copyContents (const AlbumTexture& other) const noexcept;
     void load () const;
     bool isReady () const override;
 
 private:
+    mutable Media::MediaArtworkProbeCache m_artworkCache;
+    mutable std::shared_ptr<const Media::MediaArtwork> m_loadedArtwork;
+    mutable std::chrono::steady_clock::time_point m_nextProbe {};
     std::vector<FrameSharedPtr> m_frames;
     mutable glm::vec4 m_resolution;
     mutable uint32_t m_width = 0;

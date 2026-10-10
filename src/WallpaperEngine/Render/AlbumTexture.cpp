@@ -1,30 +1,30 @@
 #include "AlbumTexture.h"
+#include "ScopedPixelUnpack.h"
 
 #include "RenderContext.h"
 #include "WallpaperEngine/Assets/AssetLoadException.h"
 #include "WallpaperEngine/Data/Utils/ScopeGuard.h"
 #include "WallpaperEngine/Media/MediaSource.h"
-#include "stb_image.h"
+#include "WallpaperEngine/Media/MediaArtwork.h"
+#include <iterator>
 
 using namespace WallpaperEngine::Render;
 
-int albumtexture_read (void* user, char* data, int size) {
-    auto* stream = static_cast<ReadStream*> (user);
 
-    stream->read (data, size);
-
-    return stream->gcount ();
+void WallpaperEngine::Render::uploadAlbumArtworkTexture (
+    GLuint texture, const WallpaperEngine::Media::MediaArtwork* artwork
+) {
+    TightPixelTransfer transfer;
+    glBindTexture (GL_TEXTURE_2D, texture);
+    if (!artwork) {
+        constexpr std::uint32_t transparent = 0;
+        glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA,
+                      GL_UNSIGNED_BYTE, &transparent);
+        return;
+    }
+    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA8, artwork->width, artwork->height,
+                  0, GL_RGBA, GL_UNSIGNED_BYTE, artwork->rgba.data ());
 }
-
-void albumtexture_skip (void* user, int n) {
-    auto* stream = static_cast<ReadStream*> (user);
-    stream->seekg (n, std::ios::cur);
-}
-
-int albumtexture_eof (void* user) { return static_cast<ReadStream*> (user)->eof (); }
-
-stbi_io_callbacks album_texture_callbacks
-    = { .read = albumtexture_read, .skip = albumtexture_skip, .eof = albumtexture_eof };
 
 AlbumTexture::AlbumTexture (RenderContext& context) : Helpers::ContextAware (context) {
     // setup a basic texture with clamping and no mipmaps
@@ -65,69 +65,54 @@ float AlbumTexture::getSpritesheetDuration () const { return 0.0f; }
 void AlbumTexture::incrementUsageCount () const { }
 void AlbumTexture::decrementUsageCount () const { }
 void AlbumTexture::update () const { }
+void AlbumTexture::refresh (const AlbumTexture& previous) const {
+    const auto now = std::chrono::steady_clock::now ();
+    if (now < m_nextProbe) return;
+    m_nextProbe = now + std::chrono::seconds (1);
+    const auto& url = getContext ().getMediaSource ().getMediaInfo ().url;
+    // Players sometimes publish a file URL before creating its image, or overwrite
+    // the same path for the next cover without a Metadata signal.
+    if (url && url->starts_with ("file://") && m_artworkCache.load (*url) != m_loadedArtwork) {
+        if (isReady ()) previous.copyContents (*this);
+        load ();
+    }
+}
 
-void AlbumTexture::copyContents (const TextureProvider& other) const noexcept {
-    // fallback to gpu -> cpu -> gpu copy
-    // RGBA8 texture: 4 bytes per pixel
-    size_t bufferSize = other.getTextureWidth (0) * other.getTextureHeight (0) * 4;
-
-    uint8_t* buffer = new uint8_t[bufferSize];
-
-    // Read the source texture
-    glBindTexture (GL_TEXTURE_2D, other.getTextureID (0));
-    glGetnTexImage (GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, bufferSize, buffer);
-
-    // Upload into another texture
-    glBindTexture (GL_TEXTURE_2D, this->m_textureID);
-    glTexImage2D (
-	GL_TEXTURE_2D, 0, GL_RGBA8, other.getTextureWidth (0), other.getTextureHeight (0), 0, GL_RGBA, GL_UNSIGNED_BYTE,
-	buffer
-    );
-
-    delete[] buffer;
-
-    // copy over the important metadata
-    this->m_width = other.getTextureWidth (0);
-    this->m_height = other.getTextureHeight (0);
-    this->m_resolution = *other.getResolution ();
+void AlbumTexture::copyContents (const AlbumTexture& other) const noexcept {
+    // Immutable decoded snapshots also preserve the previous cover without a GPU readback.
+    m_loadedArtwork = other.m_loadedArtwork;
+    m_width = other.m_width;
+    m_height = other.m_height;
+    m_resolution = other.m_resolution;
+    uploadAlbumArtworkTexture (m_textureID, m_loadedArtwork.get ());
 }
 
 void AlbumTexture::load () const {
-    this->m_width = 0;
-    this->m_height = 0;
-
-    for (const auto& project : this->getContext ().getApp ().getBackgrounds () | std::views::values) {
-	try {
-	    // try to open the file in any of the asset locators
-	    auto contents = project->assetLocator->read ("$mediaThumbnail");
-
-	    int width, height, channels;
-
-	    auto* dataptr
-		= stbi_load_from_callbacks (&album_texture_callbacks, contents.get (), &width, &height, &channels, 4);
-
-	    if (dataptr == nullptr) {
-		continue;
-	    }
-
-	    ScopeGuard guard ([dataptr] { stbi_image_free (dataptr); });
-
-	    if (width == 0 || height == 0) {
-		continue;
-	    }
-
-	    this->m_width = width;
-	    this->m_height = height;
-	    this->m_resolution = glm::vec4 (this->m_width, this->m_height, this->m_width, this->m_height);
-
-	    // setup texture contents
-	    glBindTexture (GL_TEXTURE_2D, this->m_textureID);
-	    glTexImage2D (GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, dataptr);
-	    return;
-	} catch (AssetLoadException&) {
-	    // this is expected if the thumbnail is not available
-	}
+    const auto& url = this->getContext ().getMediaSource ().getMediaInfo ().url;
+    std::shared_ptr<const Media::MediaArtwork> artwork;
+    if (url && url->starts_with ("file://")) {
+        artwork = this->m_artworkCache.load (*url);
+    } else if (url) {
+        for (const auto& project : this->getContext ().getApp ().getBackgrounds () | std::views::values) {
+            try {
+                auto contents = project->assetLocator->read ("$mediaThumbnail");
+                std::vector<std::uint8_t> bytes (std::istreambuf_iterator<char> (*contents), {});
+                artwork = Media::decodeArtworkBytes (bytes);
+                if (artwork) break;
+            } catch (AssetLoadException&) { }
+        }
     }
+    this->m_width = artwork ? artwork->width : 0;
+    this->m_height = artwork ? artwork->height : 0;
+    if (artwork == m_loadedArtwork) return;
+    m_loadedArtwork = artwork;
+    if (!artwork) {
+        m_resolution = glm::vec4 (1);
+        uploadAlbumArtworkTexture (m_textureID, nullptr);
+        return;
+    }
+    this->m_resolution = glm::vec4 (artwork->width, artwork->height, artwork->width, artwork->height);
+    uploadAlbumArtworkTexture (this->m_textureID, artwork.get ());
 }
 
 bool AlbumTexture::isReady () const {

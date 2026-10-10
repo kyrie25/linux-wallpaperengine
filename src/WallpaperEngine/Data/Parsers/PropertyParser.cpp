@@ -110,7 +110,7 @@ PropertySharedPtr PropertyParser::parseSlider (const JSON& it, const std::string
 	    .max = it.optional ("max", 0.0f),
 	    .step = it.optional ("step", 0.0f),
 	},
-	it.require ("value", "Property must have a value")
+	it.optional ("value", it.optional ("min", 0.0f))
     );
 }
 
@@ -147,6 +147,7 @@ PropertySharedPtr PropertyParser::parseTextInput (const JSON& it, const std::str
 	    .name = name,
 	    .text = it.optional<std::string> ("text", ""),
 	},
-	it.optional<std::string> ("value", "")
+	it.contains ("value") && !it["value"].is_null ()
+            ? (it["value"].is_string () ? it["value"].get<std::string> () : it["value"].dump ()) : ""
     );
 }

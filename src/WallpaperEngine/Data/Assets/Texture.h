@@ -158,6 +158,8 @@ struct Texture {
     FIF freeImageFormat = FIF_UNKNOWN;
     /** Indicates if we have an MP4 video */
     bool isVideoMp4 = false;
+    /** Plain GIF file with encoded frame timing, rather than a TEX spritesheet */
+    bool isAnimatedGif = false;
     /** The amount of images in the texture file */
     uint32_t imageCount = 0;
     /** List of mipmaps */
